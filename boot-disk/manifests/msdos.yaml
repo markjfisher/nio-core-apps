@@ -1,0 +1,21 @@
+# Paths support shell-style environment expansion (${VAR}) and ~.
+# Relative paths are resolved from the nio-core-apps repository root.
+#
+# Each entry copies a host file into the MS-DOS boot image with the given name.
+# Optional entries (required: false) are skipped when the source file is missing.
+
+apps:
+  - src: ${BOOT_DISK_BIN}/fhost.exe
+    name: FHOST.EXE
+  - src: ${BOOT_DISK_BIN}/fls.exe
+    name: FLS.EXE
+  - src: ${BOOT_DISK_BIN}/fin.exe
+    name: FIN.EXE
+  - src: ${BOOT_DISK_BIN}/fmount.exe
+    name: FMOUNT.EXE
+  - src: ${BOOT_DISK_BIN}/fboot.exe
+    name: FBOOT.EXE
+  - src: ${BOOT_DISK_BIN}/fdrive.exe
+    name: FDRIVE.EXE
+  - src: ${BOOT_DISK_BIN}/fapp.exe
+    name: FAPP.EXE

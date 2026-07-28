@@ -1,0 +1,16 @@
+# Paths support shell-style environment expansion (${VAR}) and ~.
+# Relative paths are resolved from the nio-core-apps repository root.
+
+apps:
+  - src: ${BOOT_DISK_BIN}/fhost.xex
+    name: fhost.xex
+  - src: ${BOOT_DISK_BIN}/fls.xex
+    name: fls.xex
+  - src: ${BOOT_DISK_BIN}/fin.xex
+    name: fin.xex
+  - src: ${BOOT_DISK_BIN}/fmount.xex
+    name: fmount.xex
+  - src: ${BOOT_DISK_BIN}/fdrive.xex
+    name: fdrive.xex
+  - src: ${BOOT_DISK_BIN}/fapp.xex
+    name: fapp.xex
