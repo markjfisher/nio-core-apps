@@ -6,11 +6,10 @@
 #define FNSVC_MAX_URI   255
 #define FNSVC_MAX_PATH  127
 
-#ifdef CONFIG_NIO_BBC_LITE
-#define FNSVC_MOUNT_URI_MAX 160
-#define FNSVC_MOUNT_MODE_MAX 4
-#else
+#ifndef FNSVC_MOUNT_URI_MAX
 #define FNSVC_MOUNT_URI_MAX FNSVC_MAX_URI
+#endif
+#ifndef FNSVC_MOUNT_MODE_MAX
 #define FNSVC_MOUNT_MODE_MAX 8
 #endif
 
@@ -43,13 +42,6 @@ typedef void (*fnsvc_list_cb)(uint8_t is_dir,
                               void *ctx);
 
 int fnsvc_list_directory(const char *uri, fnsvc_list_cb cb, void *ctx);
-#ifdef CONFIG_NIO_BBC_LITE
-int fnsvc_list_directory_page(const char *uri, uint16_t start,
-                              uint16_t max_payload, uint8_t max_entries,
-                              fnsvc_list_cb cb,
-                              void *ctx, uint16_t *next_start,
-                              uint8_t *more);
-#endif
 int fnsvc_resolve_path(const char *base_uri, const char *arg,
                        char *resolved_uri, uint16_t resolved_cap,
                        char *display_path, uint16_t display_cap,
