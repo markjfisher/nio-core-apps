@@ -3,7 +3,6 @@
 
 #include <ctype.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #ifdef __linux__
 #include <strings.h>
@@ -61,7 +60,8 @@ static int prompt_args(uint8_t *slot, int *unit, uint8_t *readonly)
   if (!input_slot[0])
     return 0;
 
-  *slot = (uint8_t) atoi(input_slot);
+  if (!fnsvc_parse_u8(input_slot, slot))
+    return 0;
   *unit = *slot;
 
   printf("Drive (blank=slot): ");
@@ -114,7 +114,10 @@ int main(int argc, char **argv)
     usage();
     return 1;
   } else {
-    slot = (uint8_t) atoi(argv[1]);
+    if (!fnsvc_parse_u8(argv[1], &slot)) {
+      puts("Bad slot");
+      return 1;
+    }
     unit = slot;
     for (argi = 2; argi < argc; argi++) {
       if (isalpha((unsigned char) argv[argi][0]) && argv[argi][1] == ':') {
@@ -134,8 +137,8 @@ int main(int argc, char **argv)
     }
   }
 
-  if (slot >= FNCTL_MAX_UNITS) {
-    puts("Bad slot");
+  if (unit < 0 || unit >= FNCTL_MAX_UNITS) {
+    puts("Bad drive");
     return 1;
   }
 
@@ -144,12 +147,12 @@ int main(int argc, char **argv)
     return 2;
   }
 
-  if (!fnsvc_disk_mount(slot, mount.uri, readonly)) {
+  if (!fnsvc_disk_mount((uint8_t) unit, mount.uri, readonly)) {
     puts("Disk mount failed");
     return 2;
   }
 
-  if (!fnctl_set_unit_slot((uint8_t) unit, slot)) {
+  if (!fnctl_set_unit_slot((uint8_t) unit, (uint8_t) unit)) {
     puts("Unable to update FujiNet drive mapping");
     return 2;
   }

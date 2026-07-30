@@ -1,26 +1,22 @@
 #include "fnsvc.h"
 
 #include "fnctl.h"
+#include "fujinet-nio.h"
 
 #include <stddef.h>
 #include <string.h>
 
 enum {
-  NIO_DEVICEID_FUJI = 0x70,
   NIO_DEVICEID_DISK = 0xFC,
   NIO_DEVICEID_FILE = 0xFE
-};
-
-enum {
-  NIO_FUJI_GET_MOUNT = 0xFB,
-  NIO_FUJI_SET_MOUNT = 0xFC
 };
 
 enum {
   NIO_DISK_VERSION = 1,
   NIO_DISK_MOUNT = 0x01,
   NIO_DISK_UNMOUNT = 0x02,
-  NIO_DISK_RESTORE_BOOT = 0x0A
+  NIO_DISK_RESTORE_BOOT = 0x0A,
+  NIO_DISK_LIST_MOUNTS = 0x0D
 };
 
 enum {
@@ -39,6 +35,8 @@ enum {
 
 static uint8_t req_buf[FNSVC_IO_BUF_SIZE];
 static uint8_t resp_buf[FNSVC_IO_BUF_SIZE];
+static fn_appstore_io_t appstore_io = { req_buf, sizeof(req_buf) };
+static char slot_key_buf[9];
 static uint8_t last_error;
 static uint8_t last_status;
 static uint8_t last_raw_error;
@@ -302,96 +300,100 @@ uint16_t fnsvc_last_response_len(void)
   return last_response_len;
 }
 
+int fnsvc_parse_u8(const char *text, uint8_t *value)
+{
+  uint16_t parsed = 0;
+
+  if (!text || !text[0] || !value)
+    return 0;
+  while (*text) {
+    uint8_t digit;
+    if (*text < '0' || *text > '9')
+      return 0;
+    digit = (uint8_t) (*text++ - '0');
+    if (parsed > 25 || (parsed == 25 && digit > 5))
+      return 0;
+    parsed = (uint16_t) (parsed * 10 + digit);
+  }
+  *value = (uint8_t) parsed;
+  return 1;
+}
+
 int fnsvc_get_mount(uint8_t slot, fnsvc_mount_t *mount)
 {
-  uint8_t req[1];
-  uint8_t status;
-  uint16_t resp_len;
-  uint16_t off;
-  uint8_t len;
+  fn_appstore_read_t rr;
+  uint8_t result;
+  uint16_t uri_len;
 
-  if (!mount || slot >= FNCTL_MAX_UNITS)
+  if (!mount)
     return 0;
-  last_error = FNSVC_ERR_NONE;
-  last_status = 0;
-  last_raw_error = 0;
-  last_response_len = 0;
   zero_bytes(mount, sizeof(*mount));
-  req[0] = slot;
 
-  if (!service_call(NIO_DEVICEID_FUJI, NIO_FUJI_GET_MOUNT,
-                    req, sizeof(req), resp_buf, sizeof(resp_buf), &status, &resp_len))
+  slot_key_buf[0] = 's';
+  slot_key_buf[1] = 'l';
+  slot_key_buf[2] = 'o';
+  slot_key_buf[3] = 't';
+  slot_key_buf[4] = '-';
+  slot_key_buf[5] = (char) ('0' + slot / 100);
+  slot_key_buf[6] = (char) ('0' + (slot / 10) % 10);
+  slot_key_buf[7] = (char) ('0' + slot % 10);
+  slot_key_buf[8] = 0;
+
+  result = fn_appstore_read(&appstore_io, "config-nio", slot_key_buf, 0,
+                            resp_buf, sizeof(resp_buf), &rr);
+  if (result != FN_OK)
     return fail(FNSVC_ERR_TRANSPORT);
-
-  last_status = status;
-  last_response_len = resp_len;
-
-  if (status != FNSVC_STATUS_OK)
-    return fail(FNSVC_ERR_STATUS);
-  if (resp_len < 4)
-    return fail(FNSVC_ERR_SHORT_RESPONSE);
-  if (resp_buf[0] != slot)
+  if ((rr.flags & FN_APPSTORE_READ_EXISTS) == 0)
+    return 1;
+  if (rr.bytes_read < 3 || resp_buf[0] != 1)
     return fail(FNSVC_ERR_BAD_VERSION);
 
-  mount->enabled = resp_buf[1] & 0x01;
-  off = 3;
-  len = resp_buf[2];
-  if (off + len + 1 > resp_len)
-    return fail(FNSVC_ERR_SHORT_RESPONSE);
-#if FNSVC_MOUNT_URI_MAX < FNSVC_MAX_URI
-  if (len >= sizeof(mount->uri)) {
-    memcpy(mount->uri, &resp_buf[off], sizeof(mount->uri) - 1);
-    mount->uri[sizeof(mount->uri) - 1] = 0;
-  } else {
-    memcpy(mount->uri, &resp_buf[off], len);
-    mount->uri[len] = 0;
-  }
-#else
-  memcpy(mount->uri, &resp_buf[off], len);
-  mount->uri[len] = 0;
-#endif
-  off += len;
-  len = resp_buf[off++];
-  if (off + len > resp_len || len >= sizeof(mount->mode))
-    return fail(FNSVC_ERR_SHORT_RESPONSE);
-  memcpy(mount->mode, &resp_buf[off], len);
-  mount->mode[len] = 0;
-  return 1;
+  uri_len = (uint16_t) (rr.bytes_read - 2);
+  if (uri_len >= sizeof(mount->uri))
+    uri_len = (uint16_t) (sizeof(mount->uri) - 1);
+  mount->enabled = 1;
+  strcpy(mount->mode, (resp_buf[1] & 0x01) ? "r" : "rw");
+  memcpy(mount->uri, resp_buf + 2, uri_len);
+  mount->uri[uri_len] = 0;
+  return mount->uri[0] != 0;
 }
 
 int fnsvc_set_mount(uint8_t slot, const char *uri, const char *mode, uint8_t enabled)
 {
-  uint8_t status;
-  uint16_t resp_len;
-  size_t uri_size = strlen(uri ? uri : "");
-  size_t mode_size = strlen(mode ? mode : "");
-  uint8_t uri_len;
-  uint8_t mode_len;
-  uint16_t off = 0;
+  fn_appstore_delete_t dr;
+  fn_appstore_write_t wr;
+  uint16_t uri_len;
+  uint16_t record_len;
 
-  if (slot >= FNCTL_MAX_UNITS || uri_size > FNSVC_MAX_URI ||
-      mode_size > 255 || 4 + uri_size + mode_size > sizeof(req_buf))
-    return 0;
+  slot_key_buf[0] = 's';
+  slot_key_buf[1] = 'l';
+  slot_key_buf[2] = 'o';
+  slot_key_buf[3] = 't';
+  slot_key_buf[4] = '-';
+  slot_key_buf[5] = (char) ('0' + slot / 100);
+  slot_key_buf[6] = (char) ('0' + (slot / 10) % 10);
+  slot_key_buf[7] = (char) ('0' + slot % 10);
+  slot_key_buf[8] = 0;
 
-  uri_len = (uint8_t) uri_size;
-  mode_len = (uint8_t) mode_size;
+  if (fn_appstore_delete(&appstore_io, "config-nio", slot_key_buf, &dr) != FN_OK)
+    return fail(FNSVC_ERR_TRANSPORT);
+  if (!enabled)
+    return 1;
+  if (!uri || !uri[0])
+    return fail(FNSVC_ERR_INVALID_ARG);
 
-  req_buf[off++] = slot;
-  req_buf[off++] = enabled ? 0x01 : 0x00;
-  req_buf[off++] = uri_len;
-  if (uri_len) {
-    memcpy(&req_buf[off], uri, uri_len);
-    off += uri_len;
-  }
-  req_buf[off++] = mode_len;
-  if (mode_len) {
-    memcpy(&req_buf[off], mode, mode_len);
-    off += mode_len;
-  }
-
-  return service_call(NIO_DEVICEID_FUJI, NIO_FUJI_SET_MOUNT,
-                      req_buf, off, resp_buf, sizeof(resp_buf), &status, &resp_len) &&
-         status == FNSVC_STATUS_OK;
+  uri_len = (uint16_t) strlen(uri);
+  if (uri_len > FNSVC_MAX_URI || (size_t) uri_len + 2 > sizeof(resp_buf))
+    return fail(FNSVC_ERR_REQUEST_TOO_LARGE);
+  resp_buf[0] = 1;
+  resp_buf[1] = (uint8_t) (mode && strcmp(mode, "r") == 0 ? 0x01 : 0x00);
+  memcpy(resp_buf + 2, uri, uri_len);
+  record_len = (uint16_t) (uri_len + 2);
+  if (fn_appstore_write(&appstore_io, "config-nio", slot_key_buf, 0,
+                        resp_buf, record_len, &wr) != FN_OK ||
+      wr.bytes_written != record_len)
+    return fail(FNSVC_ERR_TRANSPORT);
+  return 1;
 }
 
 int fnsvc_disk_mount(uint8_t slot, const char *uri, uint8_t readonly)
@@ -418,6 +420,46 @@ int fnsvc_disk_mount(uint8_t slot, const char *uri, uint8_t readonly)
   return service_call(NIO_DEVICEID_DISK, NIO_DISK_MOUNT,
                       req_buf, off, resp_buf, 32, &status, &resp_len) &&
          status == FNSVC_STATUS_OK;
+}
+
+int fnsvc_disk_list_mounts(uint16_t start, char *text, uint16_t text_cap,
+                           uint16_t *entry_count, uint8_t *more)
+{
+  uint8_t status;
+  uint16_t resp_len;
+  uint16_t entries_len;
+
+  if (!text || text_cap < 2 || !entry_count || !more)
+    return 0;
+
+  req_buf[0] = NIO_DISK_VERSION;
+  req_buf[1] = 0x01;
+  put_u16le(&req_buf[2], 0);
+  put_u16le(&req_buf[4], 0);
+  put_u16le(&req_buf[6], start);
+  put_u16le(&req_buf[8], (uint16_t) (text_cap - 1));
+
+  if (!service_call(NIO_DEVICEID_DISK, NIO_DISK_LIST_MOUNTS,
+                    req_buf, 10, resp_buf, sizeof(resp_buf),
+                    &status, &resp_len))
+    return fail(FNSVC_ERR_TRANSPORT);
+  last_status = status;
+  last_response_len = resp_len;
+  if (status != FNSVC_STATUS_OK)
+    return fail(FNSVC_ERR_STATUS);
+  if (resp_len < 10 || resp_buf[0] != NIO_DISK_VERSION)
+    return fail(FNSVC_ERR_BAD_VERSION);
+  if ((resp_buf[1] & 0x02) == 0)
+    return fail(FNSVC_ERR_BAD_VERSION);
+
+  *entry_count = get_u16le(&resp_buf[6]);
+  entries_len = get_u16le(&resp_buf[8]);
+  if ((uint16_t) (10 + entries_len) > resp_len || entries_len >= text_cap)
+    return fail(FNSVC_ERR_ENTRIES_BOUNDS);
+  memcpy(text, resp_buf + 10, entries_len);
+  text[entries_len] = 0;
+  *more = (uint8_t) (resp_buf[1] & 0x01);
+  return 1;
 }
 
 int fnsvc_disk_unmount(uint8_t slot)

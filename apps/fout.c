@@ -2,7 +2,6 @@
 #include "fnsvc.h"
 
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 static void usage(void)
@@ -35,8 +34,7 @@ static int prompt_args(uint8_t *slot)
   if (!input_slot[0])
     return 0;
 
-  *slot = (uint8_t) atoi(input_slot);
-  return 1;
+  return fnsvc_parse_u8(input_slot, slot);
 }
 #endif
 
@@ -56,12 +54,10 @@ int main(int argc, char **argv)
     usage();
     return 1;
   } else {
-    slot = (uint8_t) atoi(argv[1]);
-  }
-
-  if (slot >= FNCTL_MAX_UNITS) {
-    puts("Bad slot");
-    return 1;
+    if (!fnsvc_parse_u8(argv[1], &slot)) {
+      puts("Bad slot");
+      return 1;
+    }
   }
 
   if (!fnsvc_set_mount(slot, "", "r", 0)) {

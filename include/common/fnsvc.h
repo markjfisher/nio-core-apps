@@ -46,11 +46,14 @@ int fnsvc_resolve_path(const char *base_uri, const char *arg,
                        char *resolved_uri, uint16_t resolved_cap,
                        char *display_path, uint16_t display_cap,
                        uint8_t *flags_out);
+int fnsvc_parse_u8(const char *text, uint8_t *value);
 int fnsvc_get_mount(uint8_t slot, fnsvc_mount_t *mount);
 int fnsvc_set_mount(uint8_t slot, const char *uri, const char *mode, uint8_t enabled);
 int fnsvc_disk_mount(uint8_t slot, const char *uri, uint8_t readonly);
 int fnsvc_disk_unmount(uint8_t slot);
 int fnsvc_disk_restore_boot(uint8_t slot);
+int fnsvc_disk_list_mounts(uint16_t start, char *text, uint16_t text_cap,
+                           uint16_t *entry_count, uint8_t *more);
 uint8_t fnsvc_last_error(void);
 uint8_t fnsvc_last_status(void);
 uint8_t fnsvc_last_raw_error(void);

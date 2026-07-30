@@ -3,7 +3,6 @@
 
 #include <ctype.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 static void usage(void)
@@ -30,7 +29,7 @@ static void trim_line(char *s)
     *p = 0;
 }
 
-static void prompt_args(uint8_t *slot, const char **path)
+static int prompt_args(uint8_t *slot, const char **path)
 {
   printf("Slot (blank=0): ");
   fflush(stdout);
@@ -38,8 +37,8 @@ static void prompt_args(uint8_t *slot, const char **path)
     input_slot[0] = 0;
   trim_line(input_slot);
 
-  if (input_slot[0])
-    *slot = (uint8_t) atoi(input_slot);
+  if (input_slot[0] && !fnsvc_parse_u8(input_slot, slot))
+    return 0;
 
   printf("Image URI/path: ");
   fflush(stdout);
@@ -48,6 +47,7 @@ static void prompt_args(uint8_t *slot, const char **path)
   trim_line(input_path);
 
   *path = input_path;
+  return 1;
 }
 #endif
 
@@ -58,14 +58,20 @@ int main(int argc, char **argv)
 
 #ifdef __ATARI__
   if (argc == 1) {
-    prompt_args(&slot, &path);
+    if (!prompt_args(&slot, &path)) {
+      puts("Bad slot");
+      return 1;
+    }
   } else
 #endif
   if (argc < 2 || argc > 3 || (argc > 1 && argv[1][0] == '?')) {
     usage();
     return 1;
   } else if (argc == 3) {
-    slot = (uint8_t) atoi(argv[1]);
+    if (!fnsvc_parse_u8(argv[1], &slot)) {
+      puts("Bad slot");
+      return 1;
+    }
     path = argv[2];
   } else {
     path = argv[1];
@@ -73,11 +79,6 @@ int main(int argc, char **argv)
 
   if (!path || !*path) {
     usage();
-    return 1;
-  }
-
-  if (slot >= FNCTL_MAX_UNITS) {
-    puts("Bad slot");
     return 1;
   }
 
