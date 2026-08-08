@@ -8,7 +8,9 @@ CFLAGS += -I$(PLATFORM_INCLUDE_DIR)
 CFLAGS += -I$(NIO_INCLUDE_DIR)
 CFLAGS += -DFNSVC_LIST_MAX_PAYLOAD=$(FNSVC_LIST_MAX_PAYLOAD)
 
-LDFLAGS += -mcpu=68000 -msoft-float
+# Keep Amiga applications self-contained instead of requiring the optional
+# mathieeedoubbas.library at process startup.
+LDFLAGS += -mcpu=68000 -msoft-float -mcrt=clib2
 
 define compile_c
 	$(CC) $(CFLAGS) -MMD -MF $(@:.o=.d) -c -o $@ $<
