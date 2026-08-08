@@ -14,12 +14,13 @@ utilities:
 - `fmount`
 - `fout`
 
-Supported standalone targets are `msdos`, `atari`, and `linux`.
+Supported standalone targets are `msdos`, `atari`, `linux`, and `amiga`.
 
 ```sh
 make TARGET=msdos FUJINET_NIO_LIB=../fujinet-nio-lib
 make TARGET=atari FUJINET_NIO_LIB=../fujinet-nio-lib
 make TARGET=linux FUJINET_NIO_LIB=../fujinet-nio-lib
+make TARGET=amiga FUJINET_NIO_LIB=../fujinet-nio-lib
 ```
 
 Boot disks are repo-owned:
@@ -31,3 +32,6 @@ make TARGET=atari boot-disk FUJINET_NIO_LIB=../fujinet-nio-lib
 
 BBC core utilities are currently generated from `fn-rom`, because the BBC uses
 small ASM transient utilities rather than these portable C programs.
+
+The Amiga target uses `serial.device` through `fujinet-nio-lib` and persists
+the `fnctl` host/path and unit mappings through FujiNet's app-store service.

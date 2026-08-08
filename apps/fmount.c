@@ -7,6 +7,20 @@
 #ifdef __linux__
 #include <strings.h>
 #define stricmp strcasecmp
+#else
+static int stricmp(const char *a, const char *b)
+{
+  unsigned char ca;
+  unsigned char cb;
+
+  do {
+    ca = (unsigned char)tolower((unsigned char)*a++);
+    cb = (unsigned char)tolower((unsigned char)*b++);
+    if (ca != cb)
+      return (int)ca - (int)cb;
+  } while (ca != 0);
+  return 0;
+}
 #endif
 
 static void usage(void)

@@ -1,4 +1,4 @@
-TARGETS := msdos atari linux
+TARGETS := msdos atari linux amiga
 BOOT_IMAGE_TARGETS := msdos atari
 DEFAULT_TARGET := $(if $(TARGET),$(TARGET),all-targets)
 

@@ -40,6 +40,8 @@ else ifeq ($(COMPILER_FAMILY),cc65)
 include makefiles/compiler-cc65.mk
 else ifeq ($(COMPILER_FAMILY),gcc)
 include makefiles/compiler-gcc.mk
+else ifeq ($(COMPILER_FAMILY),amigagcc)
+include makefiles/compiler-amigagcc.mk
 else
 $(error Unknown compiler family '$(COMPILER_FAMILY)' for TARGET=$(TARGET))
 endif

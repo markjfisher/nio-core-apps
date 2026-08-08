@@ -70,6 +70,7 @@ static void format_date(char *out, uint32_t mtime)
   struct tm *now_tm;
   int year = 0;
   int current_year = 0;
+  unsigned display_year;
 
   if (mtime == 0) {
     strcpy(out, "?? ??? ??:??");
@@ -84,18 +85,27 @@ static void format_date(char *out, uint32_t mtime)
   }
 
   year = tmv->tm_year + 1900;
+#ifndef __amigaos__
   now = time(NULL);
   if (now != (time_t) -1 && now != (time_t) 0) {
     now_tm = localtime(&now);
     if (now_tm)
       current_year = now_tm->tm_year + 1900;
   }
+#else
+  /* Amiga newlib has no gettimeofday provider for time(NULL). */
+  (void) now;
+  (void) now_tm;
+#endif
 
   if (current_year != 0 && current_year == year)
     sprintf(out, "%2d %s %02d:%02d", tmv->tm_mday, months[tmv->tm_mon],
             tmv->tm_hour, tmv->tm_min);
-  else
-    sprintf(out, "%2d %s %4d", tmv->tm_mday, months[tmv->tm_mon], year);
+  else {
+    display_year = (unsigned) year % 10000U;
+    sprintf(out, "%2d %s %04u", tmv->tm_mday, months[tmv->tm_mon],
+            display_year);
+  }
 }
 
 static void print_entry(uint8_t is_dir, const char *name, uint32_t size,

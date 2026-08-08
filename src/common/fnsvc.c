@@ -127,7 +127,7 @@ int fnsvc_list_directory(const char *uri, fnsvc_list_cb cb, void *ctx)
     uint8_t flags;
 
     /* v1 + uriLen + startIndex + maxPayloadBytes + flags = 6 bytes. */
-    if (uri_len + FNSVC_LIST_REQUEST_OVERHEAD > sizeof(req_buf))
+    if ((size_t) uri_len + FNSVC_LIST_REQUEST_OVERHEAD > sizeof(req_buf))
       return fail(FNSVC_ERR_REQUEST_TOO_LARGE);
 
     req_buf[off++] = NIO_FILE_VERSION;
@@ -403,7 +403,8 @@ int fnsvc_disk_mount(uint8_t slot, const char *uri, uint8_t readonly)
   uint16_t uri_len = (uint16_t) strlen(uri);
   uint16_t off = 0;
 
-  if (slot >= FNCTL_MAX_UNITS || uri_len == 0 || 8 + uri_len > sizeof(req_buf))
+  if (slot >= FNCTL_MAX_UNITS || uri_len == 0 ||
+      (size_t) uri_len + 8 > sizeof(req_buf))
     return 0;
 
   req_buf[off++] = NIO_DISK_VERSION;
