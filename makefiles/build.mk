@@ -20,8 +20,12 @@ OBJ_DIR := $(TARGET_BUILD_DIR)/obj
 BIN_DIR := $(TARGET_BUILD_DIR)/bin
 DISK_DIR := $(TARGET_BUILD_DIR)/disk
 
-APP_SRCS := $(sort $(wildcard $(APP_DIR)/*.c))
-PROGRAMS_ALL := $(basename $(notdir $(APP_SRCS)))
+PLATFORM_APP_DIR := $(APP_DIR)/platform/$(PLATFORM)
+PLATFORM_APP_SRCS := $(wildcard $(PLATFORM_APP_DIR)/*.c)
+PLATFORM_APP_NAMES := $(basename $(notdir $(PLATFORM_APP_SRCS)))
+GENERIC_APP_SRCS := $(filter-out $(PLATFORM_APP_NAMES:%=$(APP_DIR)/%.c),$(sort $(wildcard $(APP_DIR)/*.c)))
+APP_SRCS := $(sort $(PLATFORM_APP_SRCS) $(GENERIC_APP_SRCS))
+PROGRAMS_ALL := $(sort $(basename $(notdir $(APP_SRCS))))
 PROGRAMS_EXCLUDE_msdos :=
 PROGRAMS_EXCLUDE_atari := fboot
 PROGRAMS_EXCLUDE_linux :=
