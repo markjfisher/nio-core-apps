@@ -51,18 +51,7 @@ int main(int argc, char **argv)
   int argi;
   long slot_val;
 
-  {
-    int _i;
-    FILE *_dbg = fopen("DH0:fmount-debug.txt", "w");
-    if (_dbg) {
-      fprintf(_dbg, "argc=%d\n", argc);
-      for (_i = 0; _i < argc; _i++)
-        fprintf(_dbg, "argv[%d]=[%s] len=%d\n", _i, argv[_i], (int)strlen(argv[_i]));
-      fclose(_dbg);
-    }
-  }
   if (argc < 2 || argc > 4 || (argc > 1 && argv[1][0] == '?')) {
-    { FILE *_d = fopen("DH0:fmount-debug.txt", "a"); if (_d) { fprintf(_d, "USAGE@top argc=%d\n", argc); fclose(_d); } }
     usage();
     return 10;
   }
@@ -85,7 +74,6 @@ int main(int argc, char **argv)
     } else if (is_rw(argv[argi])) {
       readonly = 0;
     } else {
-      { FILE *_d = fopen("DH0:fmount-debug.txt", "a"); if (_d) { fprintf(_d, "USAGE@loop argi=%d arg=[%s] dtu=%d\n", argi, argv[argi], drive_to_unit(argv[argi])); fclose(_d); } }
       usage();
       return 10;
     }
