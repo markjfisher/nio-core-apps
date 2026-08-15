@@ -3,6 +3,8 @@
 #include <devices/trackdisk.h>
 #include <exec/io.h>
 #include <clib/alib_protos.h>
+#include <dos/dos.h>
+#include <proto/dos.h>
 #include <proto/exec.h>
 
 #include <stdio.h>
@@ -41,6 +43,23 @@ static int is_ro(const char *s)
 static int is_rw(const char *s)
 {
   return (s[0]=='R'||s[0]=='r') && (s[1]=='W'||s[1]=='w') && s[2]=='\0';
+}
+
+static BOOL has_active_dos_handler(int unit)
+{
+  char name[4];
+  struct DosList *list;
+  struct DosList *entry;
+  BOOL active = FALSE;
+
+  sprintf(name, "DN%d", unit);
+  list = LockDosList(LDF_READ | LDF_DEVICES);
+  if (list != NULL) {
+    entry = FindDosEntry(list, (CONST_STRPTR)name, LDF_DEVICES);
+    active = entry != NULL && entry->dol_Task != NULL;
+    UnLockDosList(LDF_READ | LDF_DEVICES);
+  }
+  return active;
 }
 
 int main(int argc, char **argv)
@@ -88,16 +107,33 @@ int main(int argc, char **argv)
     struct MsgPort *port;
     struct IOExtTD *request;
     struct fujinet_disk_catalog_mount catalog;
+    char dos_name[5];
+    BOOL previously_inhibited = FALSE;
     LONG result;
+    LONG uninhibit_result;
+
+    sprintf(dos_name, "DN%d:", unit);
+    if (has_active_dos_handler(unit)) {
+      if (!Inhibit((CONST_STRPTR)dos_name, DOSTRUE)) {
+        fprintf(stderr, "Cannot inhibit %s (IoErr=%ld)\n", dos_name,
+                (long)IoErr());
+        return 30;
+      }
+      previously_inhibited = TRUE;
+    }
 
     port = CreatePort(NULL, 0);
     if (port == NULL) {
+      if (previously_inhibited)
+        Inhibit((CONST_STRPTR)dos_name, DOSFALSE);
       puts("Cannot create message port");
       return 20;
     }
     request = (struct IOExtTD *)CreateExtIO(port, sizeof(*request));
     if (request == NULL) {
       DeletePort(port);
+      if (previously_inhibited)
+        Inhibit((CONST_STRPTR)dos_name, DOSFALSE);
       puts("Cannot create I/O request");
       return 20;
     }
@@ -105,6 +141,8 @@ int main(int argc, char **argv)
                    (struct IORequest *)request, 0) != 0) {
       DeleteExtIO((struct IORequest *)request);
       DeletePort(port);
+      if (previously_inhibited)
+        Inhibit((CONST_STRPTR)dos_name, DOSFALSE);
       fprintf(stderr, "Cannot open %s unit %d\n", FUJINET_DISK_DEVICE_NAME, unit);
       return 20;
     }
@@ -119,6 +157,19 @@ int main(int argc, char **argv)
     CloseDevice((struct IORequest *)request);
     DeleteExtIO((struct IORequest *)request);
     DeletePort(port);
+
+    if (previously_inhibited) {
+      uninhibit_result = Inhibit((CONST_STRPTR)dos_name, DOSFALSE);
+      if (result == 0 && !uninhibit_result) {
+        fprintf(stderr, "Mounted slot %u on DN%d, but cannot uninhibit %s (IoErr=%ld)\n",
+                (unsigned)slot, unit, dos_name, (long)IoErr());
+        return 31;
+      }
+      if (result != 0 && !uninhibit_result) {
+        fprintf(stderr, "Replacement failed (%ld); cannot uninhibit %s (IoErr=%ld)\n",
+                (long)result, dos_name, (long)IoErr());
+      }
+    }
 
     if (result != 0) {
       fprintf(stderr, "Mount failed (%ld)\n", result);
