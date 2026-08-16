@@ -1,0 +1,73 @@
+#include "fujinet-nio.h"
+
+#include <dos/dos.h>
+#include <proto/dos.h>
+
+#include <stdio.h>
+#include <string.h>
+
+#define MAPPINGS_SIZE 17U
+#define MAPPING_VALID 0x01U
+#define MAPPING_READONLY 0x02U
+
+static uint8_t mappings[MAPPINGS_SIZE];
+static uint8_t service_buffer[768];
+
+int main(void)
+{
+  fn_appstore_io_t io = { service_buffer, sizeof(service_buffer) };
+  fn_appstore_read_t read_result;
+  unsigned unit;
+  unsigned restored = 0;
+
+  if (fn_init() != FN_OK ||
+      fn_appstore_read(&io, "config-nio", "mappings", 0, mappings,
+                       sizeof(mappings), &read_result) != FN_OK) {
+    puts("FMOUNTRESTORE mappings=read-failed");
+    return 20;
+  }
+  if ((read_result.flags & FN_APPSTORE_READ_EXISTS) == 0) {
+    puts("FMOUNTRESTORE mappings=none");
+    return 0;
+  }
+  if (read_result.bytes_read != sizeof(mappings) || mappings[0] != 1) {
+    puts("FMOUNTRESTORE mappings=invalid");
+    return 20;
+  }
+
+  for (unit = 0; unit < 8; ++unit) {
+    const uint8_t flags = mappings[1 + unit * 2];
+    const uint8_t slot = mappings[2 + unit * 2];
+    fn_slot_catalog_io_t catalog_io = { service_buffer, sizeof(service_buffer) };
+    fn_slot_catalog_entry_t entry;
+    char command[32];
+    LONG result;
+
+    if ((flags & MAPPING_VALID) == 0) continue;
+    if (fn_slot_catalog_get(&catalog_io, slot, &entry) != FN_OK ||
+        (entry.flags & FN_SLOT_CATALOG_ENTRY_VALID) == 0 || entry.uri_len == 0) {
+      printf("FMOUNTRESTORE unit=%u slot=%u rc=invalid-slot\n", unit,
+             (unsigned)slot);
+      return 10;
+    }
+    sprintf(command, "C:FMOUNT %u DN%u: %s", (unsigned)slot, unit,
+            (flags & MAPPING_READONLY) ? "RO" : "RW");
+    if (!Execute((CONST_STRPTR)command, 0, 0)) {
+      result = IoErr();
+      printf("FMOUNTRESTORE unit=%u slot=%u rc=%ld\n", unit,
+             (unsigned)slot, (long)result);
+      return 10;
+    }
+    result = IoErr();
+    if (result != 0) {
+      printf("FMOUNTRESTORE unit=%u slot=%u rc=%ld\n", unit,
+             (unsigned)slot, (long)result);
+      return 10;
+    }
+    printf("FMOUNTRESTORE unit=%u slot=%u mode=%s\n", unit,
+           (unsigned)slot, (flags & MAPPING_READONLY) ? "RO" : "RW");
+    ++restored;
+  }
+  printf("FMOUNTRESTORE restored=%u\n", restored);
+  return 0;
+}
