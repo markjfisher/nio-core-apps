@@ -20,12 +20,10 @@ static int drive_to_unit(const char *s)
 {
   int n;
   if (!s || !*s) return -1;
-  /* Accept bare digit: "0".."7" */
   if (s[0] >= '0' && s[0] <= '7' && s[1] == '\0') {
     n = s[0] - '0';
     return n <= FUJINET_DISK_MAX_UNIT ? n : -1;
   }
-  /* Accept DNx: or DNx (with or without trailing colon) */
   if ((s[0] == 'D' || s[0] == 'd') &&
       (s[1] == 'N' || s[1] == 'n') &&
       s[2] >= '0' && s[2] <= '7' &&
@@ -175,7 +173,7 @@ int main(int argc, char **argv)
       fprintf(stderr, "Mount failed (%ld)\n", result);
       return 10;
     }
-    printf("Mounted slot %u on DN%d:\n", (unsigned) slot, unit);
+    printf("Mounted slot %u on DN%d:\n", (unsigned)slot, unit);
   }
   return 0;
 }
