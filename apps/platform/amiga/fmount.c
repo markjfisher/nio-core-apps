@@ -8,6 +8,8 @@
 #include <dos/filehandler.h>
 #include <proto/dos.h>
 #include <proto/exec.h>
+#include <proto/expansion.h>
+#include <libraries/expansion.h>
 
 #include <stdio.h>
 #include <string.h>
@@ -20,6 +22,7 @@ typedef struct node_snapshot {
   ULONG bpt, surfaces, low, high, dostype;
   struct MsgPort *task;
 } node_snapshot_t;
+struct ExpansionBase *ExpansionBase;
 
 static void usage(void) { puts("Usage: FMOUNT slot [DN0:|...|DN7:] [RO|RW]"); }
 static int drive_to_unit(const char *s) {
@@ -82,6 +85,33 @@ static int update_inactive_envec(int unit, const fujinet_disk_media_profile_t *p
   UnLockDosList(LDF_READ | LDF_DEVICES); return 0;
 }
 
+static int create_node(int unit, const fujinet_disk_media_profile_t *profile, uint32_t dostype)
+{
+  static char names[8][4]; static const char device[] = FUJINET_DISK_DEVICE_NAME;
+  fujinet_disk_dos_envec_t env; ULONG packet[24]; struct DeviceNode *node;
+  if (fujinet_disk_build_dos_envec(profile, dostype, &env) != FN_OK) return 30;
+  printf("FMOUNT NODE before_make unit=%d\n", unit);
+  sprintf(names[unit], "DN%d", unit);
+  packet[0]=(ULONG)names[unit]; packet[1]=(ULONG)device; packet[2]=(ULONG)unit; packet[3]=0;
+  fujinet_disk_serialize_dos_envec(&env, packet + 4);
+  node=MakeDosNode(packet);
+  if (!node) { puts("FMOUNT NODE make=failed"); return 30; }
+  node->dn_StackSize=32768; node->dn_Priority=5; node->dn_GlobalVec=(BPTR)-1; node->dn_Handler=0;
+  if (!AddDosNode(0, 0, node)) { puts("FMOUNT NODE add=failed"); return 30; }
+  printf("FMOUNT NODE add=ok unit=%d bpt=%lu dostype=%08lx\n", unit,
+         (unsigned long)env.de_BlocksPerTrack, (unsigned long)env.de_DosType);
+  return 0;
+}
+
+static void print_added_node(int unit)
+{
+  node_snapshot_t node;
+  snapshot_node(unit, &node);
+  printf("FMOUNT NODE post_add present=%ld task=%08lx bpt=%lu dostype=%08lx\n",
+         (long)node.present, (unsigned long)node.task, (unsigned long)node.bpt,
+         (unsigned long)node.dostype);
+}
+
 int main(int argc, char **argv)
 {
   long slot_val = 0; uint8_t slot, readonly = 0; int unit, i; char dos_name[5];
@@ -106,10 +136,10 @@ int main(int argc, char **argv)
   if (result!=0 || fujinet_disk_classify_media_profile(&inspection.inspection.media,&profile)!=FN_OK ||
       fujinet_disk_classify_filesystem(inspection.inspection.boot_bytes,inspection.inspection.boot_length,&dostype)!=FN_OK) {
     fprintf(stderr,"Unsupported candidate media\n"); goto fail; }
+  puts("FMOUNT INSPECT=ok");
   snapshot_node(unit,&node);
-  if (!node.present && profile.kind != FUJINET_DISK_MEDIA_PROFILE_DD_ADF) {
-    fprintf(stderr,"DN%d node unavailable for non-DD media\n",unit); goto fail;
-  }
+  {
+    BOOL create_after_mount = !node.present;
   compatible=!node.present || (node.bpt==profile.blocks_per_track && node.surfaces==profile.surfaces &&
     node.low==profile.low_cylinder && node.high==profile.high_cylinder && node.dostype==dostype);
   sprintf(dos_name,"DN%d:",unit);
@@ -121,11 +151,22 @@ int main(int argc, char **argv)
   request->iotd_Req.io_Command=FUJINET_DISK_CMD_MOUNT_CATALOG;
   request->iotd_Req.io_Data=&catalog; request->iotd_Req.io_Length=sizeof(catalog);
   result=DoIO((struct IORequest *)request);
+  printf("FMOUNT MOUNT_CATALOG rc=%ld\n", (long)result);
+  if (result==0 && create_after_mount) {
+    ExpansionBase=(struct ExpansionBase *)OpenLibrary((CONST_STRPTR)"expansion.library",0);
+    if (!ExpansionBase || create_node(unit, &profile, dostype) != 0) {
+      fprintf(stderr,"Mounted media but cannot create DN%d\n",unit); result=30;
+    } else {
+      print_added_node(unit);
+    }
+    if (ExpansionBase) { CloseLibrary((struct Library *)ExpansionBase); ExpansionBase=NULL; }
+  }
   if (result==0 && !compatible && update_inactive_envec(unit,&profile,dostype)!=0) result=30;
   if (inhibited) { uninhibit=Inhibit((CONST_STRPTR)dos_name,DOSFALSE); if (result==0 && !uninhibit) result=31; }
   CloseDevice((struct IORequest *)request); DeleteExtIO((struct IORequest *)request); DeletePort(port);
   if (result!=0) { fprintf(stderr,"Mount failed (%ld)\n",result); return 10; }
   printf("Mounted slot %u on DN%d:\n",(unsigned)slot,unit); return 0;
+  }
 fail:
   CloseDevice((struct IORequest *)request); DeleteExtIO((struct IORequest *)request); DeletePort(port); return 10;
 }
