@@ -12,10 +12,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "../../../fujinet-nio-driver/amiga/include/fujinet_disk_driver.h"
-#include "../../../fujinet-nio-driver/amiga/include/fujinet_disk_filesystem.h"
-#include "../../../fujinet-nio-driver/amiga/common/fujinet_disk_media_profile.c"
-#include "../../../fujinet-nio-driver/amiga/common/fujinet_disk_filesystem.c"
+#include <fujinet-amiga-disk/support.h>
 
 typedef struct node_snapshot {
   BOOL present;
