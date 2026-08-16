@@ -6,6 +6,7 @@ CFLAGS += -I$(APP_INCLUDE_DIR)
 CFLAGS += -I$(CONFIG_NIO_INCLUDE_DIR)
 CFLAGS += -I$(PLATFORM_INCLUDE_DIR)
 CFLAGS += -I$(NIO_INCLUDE_DIR)
+CFLAGS += -I../fujinet-nio-driver/amiga/include
 CFLAGS += -DFNSVC_LIST_MAX_PAYLOAD=$(FNSVC_LIST_MAX_PAYLOAD)
 
 # Keep Amiga applications self-contained instead of requiring the optional
