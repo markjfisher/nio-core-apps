@@ -128,14 +128,17 @@ int main(int argc, char **argv)
   if (unit<0 || unit>FUJINET_DISK_MAX_UNIT) { puts("Bad drive"); return 10; }
   port=CreatePort(NULL,0); request=port?(struct IOExtTD *)CreateExtIO(port,sizeof(*request)):NULL;
   if (!request || OpenDevice((CONST_STRPTR)FUJINET_DISK_DEVICE_NAME,(ULONG)unit,(struct IORequest *)request,0)!=0) {
-    puts("Cannot open fujinet-disk.device"); return 20; }
+    fprintf(stderr,"FMOUNT OPEN_DEVICE failed request=%p error=%ld\n",(void *)request,
+            request ? (long)request->iotd_Req.io_Error : (long)IoErr()); return 20; }
   memset(&inspection,0,sizeof(inspection)); inspection.catalog_slot=slot;
   request->iotd_Req.io_Command=FUJINET_DISK_CMD_INSPECT_CATALOG;
   request->iotd_Req.io_Data=&inspection; request->iotd_Req.io_Length=sizeof(inspection);
   result=DoIO((struct IORequest *)request);
   if (result!=0 || fujinet_disk_classify_media_profile(&inspection.inspection.media,&profile)!=FN_OK ||
       fujinet_disk_classify_filesystem(inspection.inspection.boot_bytes,inspection.inspection.boot_length,&dostype)!=FN_OK) {
-    fprintf(stderr,"Unsupported candidate media\n"); goto fail; }
+    fprintf(stderr,"FMOUNT INSPECT failed io=%ld profile=%u filesystem=%u\n",(long)result,
+            (unsigned)fujinet_disk_classify_media_profile(&inspection.inspection.media,&profile),
+            (unsigned)fujinet_disk_classify_filesystem(inspection.inspection.boot_bytes,inspection.inspection.boot_length,&dostype)); goto fail; }
   puts("FMOUNT INSPECT=ok");
   snapshot_node(unit,&node);
   {
