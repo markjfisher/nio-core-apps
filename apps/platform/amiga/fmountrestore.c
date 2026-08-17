@@ -28,29 +28,31 @@ int main(void)
     return 20;
   }
   if ((read_result.flags & FN_APPSTORE_READ_EXISTS) == 0) {
+    fn_shutdown();
     puts("FMOUNTRESTORE mappings=none");
     return 0;
   }
   if (read_result.bytes_read != sizeof(mappings) || mappings[0] != 1) {
+    fn_shutdown();
     puts("FMOUNTRESTORE mappings=invalid");
     return 20;
   }
 
   for (unit = 0; unit < 8; ++unit) {
     const uint8_t flags = mappings[1 + unit * 2];
+
+    if ((flags & MAPPING_VALID) == 0) continue;
+    ++restored;
+  }
+  fn_shutdown();
+
+  for (unit = 0; unit < 8; ++unit) {
+    const uint8_t flags = mappings[1 + unit * 2];
     const uint8_t slot = mappings[2 + unit * 2];
-    fn_slot_catalog_io_t catalog_io = { service_buffer, sizeof(service_buffer) };
-    fn_slot_catalog_entry_t entry;
     char command[32];
     LONG result;
 
     if ((flags & MAPPING_VALID) == 0) continue;
-    if (fn_slot_catalog_get(&catalog_io, slot, &entry) != FN_OK ||
-        (entry.flags & FN_SLOT_CATALOG_ENTRY_VALID) == 0 || entry.uri_len == 0) {
-      printf("FMOUNTRESTORE unit=%u slot=%u rc=invalid-slot\n", unit,
-             (unsigned)slot);
-      return 10;
-    }
     sprintf(command, "SYS:C/fmount %u DN%u: %s", (unsigned)slot, unit,
             (flags & MAPPING_READONLY) ? "RO" : "RW");
     result = SystemTags((CONST_STRPTR)command, SYS_Asynch, FALSE, TAG_DONE);
@@ -61,7 +63,6 @@ int main(void)
     }
     printf("FMOUNTRESTORE unit=%u slot=%u mode=%s\n", unit,
            (unsigned)slot, (flags & MAPPING_READONLY) ? "RO" : "RW");
-    ++restored;
   }
   printf("FMOUNTRESTORE restored=%u\n", restored);
   return 0;
