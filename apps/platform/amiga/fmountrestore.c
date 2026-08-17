@@ -1,6 +1,7 @@
 #include "fujinet-nio.h"
 
 #include <dos/dos.h>
+#include <dos/dostags.h>
 #include <proto/dos.h>
 
 #include <stdio.h>
@@ -50,15 +51,9 @@ int main(void)
              (unsigned)slot);
       return 10;
     }
-    sprintf(command, "C:FMOUNT %u DN%u: %s", (unsigned)slot, unit,
+    sprintf(command, "SYS:C/fmount %u DN%u: %s", (unsigned)slot, unit,
             (flags & MAPPING_READONLY) ? "RO" : "RW");
-    if (!Execute((CONST_STRPTR)command, 0, 0)) {
-      result = IoErr();
-      printf("FMOUNTRESTORE unit=%u slot=%u rc=%ld\n", unit,
-             (unsigned)slot, (long)result);
-      return 10;
-    }
-    result = IoErr();
+    result = SystemTags((CONST_STRPTR)command, SYS_Asynch, FALSE, TAG_DONE);
     if (result != 0) {
       printf("FMOUNTRESTORE unit=%u slot=%u rc=%ld\n", unit,
              (unsigned)slot, (long)result);
