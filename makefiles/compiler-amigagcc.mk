@@ -2,6 +2,9 @@ CC := m68k-amigaos-gcc
 
 CFLAGS += -Wall -Wextra -O2 -std=c99
 CFLAGS += -mcpu=68000 -msoft-float
+# Select clib2 headers as well as its libraries. Compiling against newlib
+# headers and linking with clib2 can leave newlib-only symbols unresolved.
+CFLAGS += -mcrt=clib2
 CFLAGS += -I$(APP_INCLUDE_DIR)
 CFLAGS += -I$(CONFIG_NIO_INCLUDE_DIR)
 CFLAGS += -I$(PLATFORM_INCLUDE_DIR)
