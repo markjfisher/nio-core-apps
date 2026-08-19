@@ -20,11 +20,15 @@ static void usage(void)
 static int parse_unit(const char *s)
 {
   int n;
-  if (!s || !*s) return -1;
+
+  if (!s || !*s)
+    return -1;
+
   if (s[0] >= '0' && s[0] <= '7' && s[1] == '\0') {
     n = s[0] - '0';
     return n <= FUJINET_DISK_MAX_UNIT ? n : -1;
   }
+
   if ((s[0] == 'D' || s[0] == 'd') &&
       (s[1] == 'N' || s[1] == 'n') &&
       s[2] >= '0' && s[2] <= '7' &&
@@ -32,31 +36,41 @@ static int parse_unit(const char *s)
     n = s[2] - '0';
     return n <= FUJINET_DISK_MAX_UNIT ? n : -1;
   }
+
   return -1;
 }
 
 static BOOL has_active_handler(int unit)
 {
   char name[4];
-  struct DosList *list, *entry;
+  struct DosList *list;
+  struct DosList *entry;
   BOOL active = FALSE;
+
   sprintf(name, "DN%d", unit);
+
   list = LockDosList(LDF_READ | LDF_DEVICES);
   if (list) {
     entry = FindDosEntry(list, (CONST_STRPTR)name, LDF_DEVICES);
     active = entry != NULL && entry->dol_Task != NULL;
     UnLockDosList(LDF_READ | LDF_DEVICES);
   }
+
   return active;
 }
 
 int main(int argc, char **argv)
 {
   int unit;
+  int rc = 0;
   char dos_name[5];
   struct MsgPort *port;
+  struct MsgPort *handler_port;
   struct IOExtTD *request;
   LONG result;
+  LONG err;
+  LONG flush_result;
+  BOOL inhibited = FALSE;
 
   if (argc != 2 || argv[1][0] == '?') {
     usage();
@@ -76,53 +90,103 @@ int main(int argc, char **argv)
     puts("Cannot create message port");
     return 20;
   }
+
   request = (struct IOExtTD *)CreateExtIO(port, sizeof(*request));
   if (request == NULL) {
     DeletePort(port);
     puts("Cannot create I/O request");
     return 20;
   }
+
   if (OpenDevice((CONST_STRPTR)FUJINET_DISK_DEVICE_NAME, (ULONG)unit,
                  (struct IORequest *)request, 0) != 0) {
     DeleteExtIO((struct IORequest *)request);
     DeletePort(port);
-    fprintf(stderr, "Cannot open %s unit %d\n", FUJINET_DISK_DEVICE_NAME, unit);
+    fprintf(stderr, "Cannot open %s unit %d\n",
+            FUJINET_DISK_DEVICE_NAME, unit);
     return 20;
   }
 
-  {
-    BOOL inhibited = FALSE;
-    if (has_active_handler(unit)) {
-      struct MsgPort *handler_port = DeviceProc((CONST_STRPTR)dos_name);
-      if (handler_port)
-        DoPkt(handler_port, ACTION_FLUSH, 0, 0, 0, 0, 0);
-      if (!Inhibit((CONST_STRPTR)dos_name, DOSTRUE)) {
-        LONG err = IoErr();
-        fprintf(stderr, "Cannot inhibit %s, IoErr=%ld\n", dos_name, (long)err);
-        CloseDevice((struct IORequest *)request);
-        DeleteExtIO((struct IORequest *)request);
-        DeletePort(port);
-        return 10;
-      }
-      inhibited = TRUE;
+  /*
+   * If AmigaDOS has a live filesystem handler for this unit, settle any
+   * pending filesystem writes and quiesce the handler before making the
+   * media unavailable.  The handler is re-enabled after TD_EJECT so it
+   * can process the resulting no-media state normally.
+   */
+  if (has_active_handler(unit)) {
+    handler_port = DeviceProc((CONST_STRPTR)dos_name);
+    if (handler_port == NULL) {
+      err = IoErr();
+      fprintf(stderr, "Cannot find handler for %s, IoErr=%ld\n",
+              dos_name, (long)err);
+      rc = 10;
+      goto cleanup;
     }
 
-    request->iotd_Req.io_Command = TD_EJECT;
-    request->iotd_Req.io_Length = 0;
-    result = DoIO((struct IORequest *)request);
+    flush_result = DoPkt(handler_port, ACTION_FLUSH, 0, 0, 0, 0, 0);
+    if (!flush_result) {
+      err = IoErr();
+      fprintf(stderr, "Cannot flush %s, IoErr=%ld\n",
+              dos_name, (long)err);
+      rc = 10;
+      goto cleanup;
+    }
 
-    if (inhibited)
-      Inhibit((CONST_STRPTR)dos_name, DOSFALSE);
+    if (!Inhibit((CONST_STRPTR)dos_name, DOSTRUE)) {
+      err = IoErr();
+      fprintf(stderr, "Cannot inhibit %s, IoErr=%ld\n",
+              dos_name, (long)err);
+      rc = 10;
+      goto cleanup;
+    }
 
-    CloseDevice((struct IORequest *)request);
-    DeleteExtIO((struct IORequest *)request);
-    DeletePort(port);
+    inhibited = TRUE;
+  }
+
+  request->iotd_Req.io_Command = TD_EJECT;
+  request->iotd_Req.io_Length = 0;
+  result = DoIO((struct IORequest *)request);
+
+  /*
+   * Once inhibited, always attempt to restore the handler regardless of
+   * whether TD_EJECT itself succeeded.
+   */
+  if (inhibited) {
+    if (!Inhibit((CONST_STRPTR)dos_name, DOSFALSE)) {
+      err = IoErr();
+      fprintf(stderr, "Cannot uninhibit %s, IoErr=%ld\n",
+              dos_name, (long)err);
+      rc = 10;
+    }
+    inhibited = FALSE;
   }
 
   if (result != 0) {
     fprintf(stderr, "Eject failed (%ld)\n", result);
-    return 10;
+    rc = 10;
   }
+
+cleanup:
+  /*
+   * Defensive cleanup if a later edit ever introduces an error path after
+   * Inhibit(TRUE) but before the normal uninhibit above.
+   */
+  if (inhibited) {
+    if (!Inhibit((CONST_STRPTR)dos_name, DOSFALSE)) {
+      err = IoErr();
+      fprintf(stderr, "Cannot uninhibit %s, IoErr=%ld\n",
+              dos_name, (long)err);
+      rc = 10;
+    }
+  }
+
+  CloseDevice((struct IORequest *)request);
+  DeleteExtIO((struct IORequest *)request);
+  DeletePort(port);
+
+  if (rc != 0)
+    return rc;
+
   printf("Ejected DN%d:\n", unit);
   return 0;
 }
