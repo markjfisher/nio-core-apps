@@ -1,8 +1,11 @@
 #include "fujinet_disk_iface.h"
 
 #include <devices/trackdisk.h>
+#include <dos/dos.h>
+#include <dos/dosextens.h>
 #include <exec/io.h>
 #include <clib/alib_protos.h>
+#include <proto/dos.h>
 #include <proto/exec.h>
 
 #include <stdio.h>
@@ -32,9 +35,25 @@ static int parse_unit(const char *s)
   return -1;
 }
 
+static BOOL has_active_handler(int unit)
+{
+  char name[4];
+  struct DosList *list, *entry;
+  BOOL active = FALSE;
+  sprintf(name, "DN%d", unit);
+  list = LockDosList(LDF_READ | LDF_DEVICES);
+  if (list) {
+    entry = FindDosEntry(list, (CONST_STRPTR)name, LDF_DEVICES);
+    active = entry != NULL && entry->dol_Task != NULL;
+    UnLockDosList(LDF_READ | LDF_DEVICES);
+  }
+  return active;
+}
+
 int main(int argc, char **argv)
 {
   int unit;
+  char dos_name[5];
   struct MsgPort *port;
   struct IOExtTD *request;
   LONG result;
@@ -49,6 +68,8 @@ int main(int argc, char **argv)
     usage();
     return 10;
   }
+
+  sprintf(dos_name, "DN%d:", unit);
 
   port = CreatePort(NULL, 0);
   if (port == NULL) {
@@ -69,13 +90,34 @@ int main(int argc, char **argv)
     return 20;
   }
 
-  request->iotd_Req.io_Command = TD_EJECT;
-  request->iotd_Req.io_Length = 0;
-  result = DoIO((struct IORequest *)request);
+  {
+    BOOL inhibited = FALSE;
+    if (has_active_handler(unit)) {
+      struct MsgPort *handler_port = DeviceProc((CONST_STRPTR)dos_name);
+      if (handler_port)
+        DoPkt(handler_port, ACTION_FLUSH, 0, 0, 0, 0, 0);
+      if (!Inhibit((CONST_STRPTR)dos_name, DOSTRUE)) {
+        LONG err = IoErr();
+        fprintf(stderr, "Cannot inhibit %s, IoErr=%ld\n", dos_name, (long)err);
+        CloseDevice((struct IORequest *)request);
+        DeleteExtIO((struct IORequest *)request);
+        DeletePort(port);
+        return 10;
+      }
+      inhibited = TRUE;
+    }
 
-  CloseDevice((struct IORequest *)request);
-  DeleteExtIO((struct IORequest *)request);
-  DeletePort(port);
+    request->iotd_Req.io_Command = TD_EJECT;
+    request->iotd_Req.io_Length = 0;
+    result = DoIO((struct IORequest *)request);
+
+    if (inhibited)
+      Inhibit((CONST_STRPTR)dos_name, DOSFALSE);
+
+    CloseDevice((struct IORequest *)request);
+    DeleteExtIO((struct IORequest *)request);
+    DeletePort(port);
+  }
 
   if (result != 0) {
     fprintf(stderr, "Eject failed (%ld)\n", result);
