@@ -4,6 +4,7 @@
 #include "fujinet-nio.h"
 
 #include <stddef.h>
+#include <stdio.h>
 #include <string.h>
 
 enum {
@@ -75,12 +76,19 @@ static int service_call(uint8_t device, uint8_t command,
                         void *response, uint16_t response_capacity,
                         uint8_t *status, uint16_t *response_len)
 {
-  if (!fnctl_nio_call(device, command, request, request_len,
-                      response, response_capacity, status, response_len)) {
+  int ok;
+  printf("DBG service_call dev=%02X cmd=%02X req=%u\n",
+         (unsigned) device, (unsigned) command, (unsigned) request_len);
+  ok = fnctl_nio_call(device, command, request, request_len,
+                      response, response_capacity, status, response_len);
+  if (!ok) {
     last_raw_error = (uint8_t) fnctl_last_dos_error();
+    printf("DBG fnctl_nio_call FAILED raw_err=%u\n", (unsigned) last_raw_error);
     return 0;
   }
   last_raw_error = 0;
+  printf("DBG fnctl_nio_call OK status=%u resp_len=%u\n",
+         (unsigned) *status, (unsigned) *response_len);
   return 1;
 }
 
@@ -109,6 +117,8 @@ int fnsvc_list_directory(const char *uri, fnsvc_list_cb cb, void *ctx)
   uint16_t start = 0;
   uint8_t status;
   uint16_t resp_len;
+
+  printf("DBG fnsvc_list_directory uri='%s' uri_len=%u\n", uri ? uri : "(null)", (unsigned) uri_len);
 
   if (!cb)
     return fail(FNSVC_ERR_INVALID_ARG);
