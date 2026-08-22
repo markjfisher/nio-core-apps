@@ -33,5 +33,5 @@ make TARGET=atari boot-disk FUJINET_NIO_LIB=../fujinet-nio-lib
 BBC core utilities are currently generated from `fn-rom`, because the BBC uses
 small ASM transient utilities rather than these portable C programs.
 
-The Amiga target uses `serial.device` through `fujinet-nio-lib` and persists
+The Amiga target uses `fujinet-nio.device` through `fujinet-nio-lib` and persists
 the `fnctl` host/path and unit mappings through FujiNet's app-store service.
