@@ -36,8 +36,7 @@ enum {
 
 static uint8_t req_buf[FNSVC_IO_BUF_SIZE];
 static uint8_t resp_buf[FNSVC_IO_BUF_SIZE];
-static fn_appstore_io_t appstore_io = { req_buf, sizeof(req_buf) };
-static char slot_key_buf[9];
+static fn_slot_catalog_io_t slot_catalog_io = { req_buf, sizeof(req_buf) };
 static uint8_t last_error;
 static uint8_t last_status;
 static uint8_t last_raw_error;
@@ -331,7 +330,7 @@ int fnsvc_parse_u8(const char *text, uint8_t *value)
 
 int fnsvc_get_mount(uint8_t slot, fnsvc_mount_t *mount)
 {
-  fn_appstore_read_t rr;
+  fn_slot_catalog_entry_t entry;
   uint8_t result;
   uint16_t uri_len;
 
@@ -339,69 +338,45 @@ int fnsvc_get_mount(uint8_t slot, fnsvc_mount_t *mount)
     return 0;
   zero_bytes(mount, sizeof(*mount));
 
-  slot_key_buf[0] = 's';
-  slot_key_buf[1] = 'l';
-  slot_key_buf[2] = 'o';
-  slot_key_buf[3] = 't';
-  slot_key_buf[4] = '-';
-  slot_key_buf[5] = (char) ('0' + slot / 100);
-  slot_key_buf[6] = (char) ('0' + (slot / 10) % 10);
-  slot_key_buf[7] = (char) ('0' + slot % 10);
-  slot_key_buf[8] = 0;
-
-  result = fn_appstore_read(&appstore_io, "config-nio", slot_key_buf, 0,
-                            resp_buf, sizeof(resp_buf), &rr);
+  result = fn_slot_catalog_get(&slot_catalog_io, slot, &entry);
+  if (result == FN_ERR_NOT_FOUND)
+    return 1;
   if (result != FN_OK)
     return fail(FNSVC_ERR_TRANSPORT);
-  if ((rr.flags & FN_APPSTORE_READ_EXISTS) == 0)
+  if (!(entry.flags & FN_SLOT_CATALOG_ENTRY_VALID) || entry.uri_len == 0)
     return 1;
-  if (rr.bytes_read < 3 || resp_buf[0] != 1)
-    return fail(FNSVC_ERR_BAD_VERSION);
 
-  uri_len = (uint16_t) (rr.bytes_read - 2);
+  uri_len = entry.uri_len;
   if (uri_len >= sizeof(mount->uri))
     uri_len = (uint16_t) (sizeof(mount->uri) - 1);
   mount->enabled = 1;
-  strcpy(mount->mode, (resp_buf[1] & 0x01) ? "r" : "rw");
-  memcpy(mount->uri, resp_buf + 2, uri_len);
+  strcpy(mount->mode, (entry.flags & FN_SLOT_CATALOG_ENTRY_READ_ONLY) ? "r" : "rw");
+  memcpy(mount->uri, entry.uri, uri_len);
   mount->uri[uri_len] = 0;
   return mount->uri[0] != 0;
 }
 
 int fnsvc_set_mount(uint8_t slot, const char *uri, const char *mode, uint8_t enabled)
 {
-  fn_appstore_delete_t dr;
-  fn_appstore_write_t wr;
+  fn_slot_catalog_entry_t entry;
+  uint8_t deleted;
   uint16_t uri_len;
-  uint16_t record_len;
 
-  slot_key_buf[0] = 's';
-  slot_key_buf[1] = 'l';
-  slot_key_buf[2] = 'o';
-  slot_key_buf[3] = 't';
-  slot_key_buf[4] = '-';
-  slot_key_buf[5] = (char) ('0' + slot / 100);
-  slot_key_buf[6] = (char) ('0' + (slot / 10) % 10);
-  slot_key_buf[7] = (char) ('0' + slot % 10);
-  slot_key_buf[8] = 0;
-
-  if (fn_appstore_delete(&appstore_io, "config-nio", slot_key_buf, &dr) != FN_OK)
-    return fail(FNSVC_ERR_TRANSPORT);
-  if (!enabled)
+  if (!enabled) {
+    if (fn_slot_catalog_delete(&slot_catalog_io, slot, &deleted) != FN_OK)
+      return fail(FNSVC_ERR_TRANSPORT);
     return 1;
+  }
   if (!uri || !uri[0])
     return fail(FNSVC_ERR_INVALID_ARG);
 
   uri_len = (uint16_t) strlen(uri);
-  if (uri_len > FNSVC_MAX_URI || (size_t) uri_len + 2 > sizeof(resp_buf))
+  if (uri_len > FNSVC_MAX_URI || (size_t) uri_len + 5 > sizeof(req_buf))
     return fail(FNSVC_ERR_REQUEST_TOO_LARGE);
-  resp_buf[0] = 1;
-  resp_buf[1] = (uint8_t) (mode && strcmp(mode, "r") == 0 ? 0x01 : 0x00);
-  memcpy(resp_buf + 2, uri, uri_len);
-  record_len = (uint16_t) (uri_len + 2);
-  if (fn_appstore_write(&appstore_io, "config-nio", slot_key_buf, 0,
-                        resp_buf, record_len, &wr) != FN_OK ||
-      wr.bytes_written != record_len)
+  if (fn_slot_catalog_put(&slot_catalog_io, slot,
+                          (uint8_t) (mode && strcmp(mode, "r") == 0
+                                     ? FN_SLOT_CATALOG_ENTRY_READ_ONLY : 0),
+                          uri, &entry) != FN_OK)
     return fail(FNSVC_ERR_TRANSPORT);
   return 1;
 }
