@@ -200,6 +200,23 @@ int main(int argc, char **argv)
   if (result != 0) {
     fprintf(stderr, "Eject failed (%ld)\n", result);
     rc = 10;
+  } else {
+    /* Remove the DosList entry so the device can be unloaded.
+     * Do NOT FreeDosEntry — MountList entries are system-managed. */
+    char name[4];
+    struct DosList *list;
+    struct DosList *entry;
+
+    sprintf(name, "DN%d", unit);
+
+    list = LockDosList(LDF_WRITE | LDF_DEVICES);
+    if (list) {
+      entry = FindDosEntry(list, (CONST_STRPTR)name, LDF_DEVICES);
+      if (entry) {
+        RemDosEntry(entry);
+      }
+      UnLockDosList(LDF_WRITE | LDF_DEVICES);
+    }
   }
 
 cleanup:
