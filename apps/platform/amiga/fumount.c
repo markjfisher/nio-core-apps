@@ -210,9 +210,15 @@ int main(int argc, char **argv)
     sprintf(name, "DN%d", unit);
 
     list = LockDosList(LDF_WRITE | LDF_DEVICES);
-    if (list) {
+    if (!list) {
+      fprintf(stderr, "Cannot lock DosList for DN%d:\n", unit);
+      rc = 10;
+    } else {
       entry = FindDosEntry(list, (CONST_STRPTR)name, LDF_DEVICES);
-      if (entry) {
+      if (!entry) {
+        fprintf(stderr, "Cannot find DosList entry for DN%d:\n", unit);
+        rc = 10;
+      } else {
         RemDosEntry(entry);
       }
       UnLockDosList(LDF_WRITE | LDF_DEVICES);
