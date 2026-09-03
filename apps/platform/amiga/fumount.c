@@ -59,6 +59,48 @@ static BOOL has_active_handler(int unit)
   return active;
 }
 
+/*
+ * Retirement is dol_Task becoming null (or the DOS node vanishing). DoPkt
+ * ACTION_DIE returning -1 with IoErr=0 is not treated as success.
+ */
+static int wait_handler_retired(int unit)
+{
+  int tries;
+  char name[4];
+  struct DosList *list;
+  struct DosList *entry;
+  BOOL retired;
+
+  sprintf(name, "DN%d", unit);
+
+  for (tries = 0; tries < 20; ++tries) {
+    list = LockDosList(LDF_READ | LDF_DEVICES);
+    if (!list)
+      Delay(1);
+    else {
+      entry = FindDosEntry(list, (CONST_STRPTR)name, LDF_DEVICES);
+      retired = entry == NULL || entry->dol_Task == NULL;
+      UnLockDosList(LDF_READ | LDF_DEVICES);
+      if (retired)
+        return 0;
+      Delay(1);
+    }
+  }
+
+  list = LockDosList(LDF_READ | LDF_DEVICES);
+  if (list) {
+    entry = FindDosEntry(list, (CONST_STRPTR)name, LDF_DEVICES);
+    retired = entry == NULL || entry->dol_Task == NULL;
+    UnLockDosList(LDF_READ | LDF_DEVICES);
+    if (retired)
+      return 0;
+  }
+
+  fprintf(stderr, "Cannot retire DN%d: handler (busy)\n", unit);
+  printf("Cannot retire DN%d: handler (busy)\n", unit);
+  return 10;
+}
+
 int main(int argc, char **argv)
 {
   int unit;
@@ -70,7 +112,6 @@ int main(int argc, char **argv)
   LONG result;
   LONG err;
   LONG flush_result;
-  BOOL inhibited = FALSE;
 
   if (argc != 2 || argv[1][0] == '?') {
     usage();
@@ -108,10 +149,9 @@ int main(int argc, char **argv)
   }
 
   /*
-   * If AmigaDOS has a live filesystem handler for this unit, settle any
-   * pending filesystem writes and quiesce the handler before making the
-   * media unavailable.  The handler is re-enabled after TD_EJECT so it
-   * can process the resulting no-media state normally.
+   * Live handler: FLUSH (fail-safe: no DIE, no eject), then ACTION_DIE
+   * until dol_Task is null. DIE failure does not eject. No live handler:
+   * skip FLUSH/DIE and eject.
    */
   if (has_active_handler(unit)) {
     handler_port = DeviceProc((CONST_STRPTR)dos_name);
@@ -132,34 +172,15 @@ int main(int argc, char **argv)
       goto cleanup;
     }
 
-    if (!Inhibit((CONST_STRPTR)dos_name, DOSTRUE)) {
-      err = IoErr();
-      fprintf(stderr, "Cannot inhibit %s, IoErr=%ld\n",
-              dos_name, (long)err);
-      rc = 10;
+    (void)DoPkt(handler_port, ACTION_DIE, 0, 0, 0, 0, 0);
+    rc = wait_handler_retired(unit);
+    if (rc != 0)
       goto cleanup;
-    }
-
-    inhibited = TRUE;
   }
 
   request->iotd_Req.io_Command = TD_EJECT;
   request->iotd_Req.io_Length = 0;
   result = DoIO((struct IORequest *)request);
-
-  /*
-   * Once inhibited, always attempt to restore the handler regardless of
-   * whether TD_EJECT itself succeeded.
-   */
-  if (inhibited) {
-    if (!Inhibit((CONST_STRPTR)dos_name, DOSFALSE)) {
-      err = IoErr();
-      fprintf(stderr, "Cannot uninhibit %s, IoErr=%ld\n",
-              dos_name, (long)err);
-      rc = 10;
-    }
-    inhibited = FALSE;
-  }
 
   if (result != 0) {
     fprintf(stderr, "Eject failed (%ld)\n", result);
@@ -167,19 +188,6 @@ int main(int argc, char **argv)
   }
 
 cleanup:
-  /*
-   * Defensive cleanup if a later edit ever introduces an error path after
-   * Inhibit(TRUE) but before the normal uninhibit above.
-   */
-  if (inhibited) {
-    if (!Inhibit((CONST_STRPTR)dos_name, DOSFALSE)) {
-      err = IoErr();
-      fprintf(stderr, "Cannot uninhibit %s, IoErr=%ld\n",
-              dos_name, (long)err);
-      rc = 10;
-    }
-  }
-
   CloseDevice((struct IORequest *)request);
   DeleteExtIO((struct IORequest *)request);
   DeletePort(port);
