@@ -16,47 +16,49 @@ static void usage(void)
   puts("Usage: FUMOUNT DN0:|...|DN7:");
 }
 
-/* Parse DNx: / dnx: or bare digit 0-7; returns unit 0-7 or -1 on error. */
+enum {
+  HANDLER_ERROR = -1,
+  HANDLER_INACTIVE = 0,
+  HANDLER_ACTIVE = 1
+};
+
+/* Bare 0-7, or DNx: / dnx: with a required colon and nothing after. */
 static int parse_unit(const char *s)
 {
-  int n;
-
   if (!s || !*s)
     return -1;
 
-  if (s[0] >= '0' && s[0] <= '7' && s[1] == '\0') {
-    n = s[0] - '0';
-    return n <= FUJINET_DISK_MAX_UNIT ? n : -1;
-  }
+  if (s[0] >= '0' && s[0] <= '7' && s[1] == '\0')
+    return s[0] - '0';
 
   if ((s[0] == 'D' || s[0] == 'd') &&
       (s[1] == 'N' || s[1] == 'n') &&
       s[2] >= '0' && s[2] <= '7' &&
-      (s[3] == ':' || s[3] == '\0')) {
-    n = s[2] - '0';
-    return n <= FUJINET_DISK_MAX_UNIT ? n : -1;
-  }
+      s[3] == ':' && s[4] == '\0')
+    return s[2] - '0';
 
   return -1;
 }
 
-static BOOL has_active_handler(int unit)
+static int get_handler_state(int unit)
 {
   char name[4];
   struct DosList *list;
   struct DosList *entry;
-  BOOL active = FALSE;
+  int state;
 
   sprintf(name, "DN%d", unit);
 
   list = LockDosList(LDF_READ | LDF_DEVICES);
-  if (list) {
-    entry = FindDosEntry(list, (CONST_STRPTR)name, LDF_DEVICES);
-    active = entry != NULL && entry->dol_Task != NULL;
-    UnLockDosList(LDF_READ | LDF_DEVICES);
-  }
+  if (!list)
+    return HANDLER_ERROR;
 
-  return active;
+  entry = FindDosEntry(list, (CONST_STRPTR)name, LDF_DEVICES);
+  state = (entry != NULL && entry->dol_Task != NULL)
+              ? HANDLER_ACTIVE
+              : HANDLER_INACTIVE;
+  UnLockDosList(LDF_READ | LDF_DEVICES);
+  return state;
 }
 
 /*
@@ -88,13 +90,16 @@ static int wait_handler_retired(int unit)
   }
 
   list = LockDosList(LDF_READ | LDF_DEVICES);
-  if (list) {
-    entry = FindDosEntry(list, (CONST_STRPTR)name, LDF_DEVICES);
-    retired = entry == NULL || entry->dol_Task == NULL;
-    UnLockDosList(LDF_READ | LDF_DEVICES);
-    if (retired)
-      return 0;
+  if (!list) {
+    fprintf(stderr, "Unable to determine DN%d: handler state\n", unit);
+    printf("Unable to determine DN%d: handler state\n", unit);
+    return 10;
   }
+  entry = FindDosEntry(list, (CONST_STRPTR)name, LDF_DEVICES);
+  retired = entry == NULL || entry->dol_Task == NULL;
+  UnLockDosList(LDF_READ | LDF_DEVICES);
+  if (retired)
+    return 0;
 
   fprintf(stderr, "Cannot retire DN%d: handler (busy)\n", unit);
   printf("Cannot retire DN%d: handler (busy)\n", unit);
@@ -104,6 +109,7 @@ static int wait_handler_retired(int unit)
 int main(int argc, char **argv)
 {
   int unit;
+  int handler_state;
   int rc = 0;
   char dos_name[5];
   struct MsgPort *port;
@@ -150,10 +156,19 @@ int main(int argc, char **argv)
 
   /*
    * Live handler: FLUSH (fail-safe: no DIE, no eject), then ACTION_DIE
-   * until dol_Task is null. DIE failure does not eject. No live handler:
-   * skip FLUSH/DIE and eject.
+   * until dol_Task is null. DIE failure does not eject. Inactive handler:
+   * skip FLUSH/DIE and eject. LockDosList failure is not treated as
+   * inactive — do not eject.
    */
-  if (has_active_handler(unit)) {
+  handler_state = get_handler_state(unit);
+  if (handler_state == HANDLER_ERROR) {
+    fprintf(stderr, "Unable to determine DN%d: handler state\n", unit);
+    printf("Unable to determine DN%d: handler state\n", unit);
+    rc = 10;
+    goto cleanup;
+  }
+
+  if (handler_state == HANDLER_ACTIVE) {
     handler_port = DeviceProc((CONST_STRPTR)dos_name);
     if (handler_port == NULL) {
       err = IoErr();
