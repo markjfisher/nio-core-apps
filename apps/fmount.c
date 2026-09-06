@@ -4,11 +4,7 @@
 #include <ctype.h>
 #include <stdio.h>
 #include <string.h>
-#ifdef __linux__
-#include <strings.h>
-#define stricmp strcasecmp
-#else
-static int stricmp(const char *a, const char *b)
+static int fn_stricmp(const char *a, const char *b)
 {
   unsigned char ca;
   unsigned char cb;
@@ -21,7 +17,6 @@ static int stricmp(const char *a, const char *b)
   } while (ca != 0);
   return 0;
 }
-#endif
 
 static void usage(void)
 {
@@ -97,9 +92,9 @@ static int prompt_args(uint8_t *slot, int *unit, uint8_t *readonly)
     input_mode[0] = 0;
   trim_line(input_mode);
   if (input_mode[0]) {
-    if (stricmp(input_mode, "RO") == 0)
+    if (fn_stricmp(input_mode, "RO") == 0)
       *readonly = 1;
-    else if (stricmp(input_mode, "RW") == 0)
+    else if (fn_stricmp(input_mode, "RW") == 0)
       *readonly = 0;
     else
       return 0;
@@ -140,9 +135,9 @@ int main(int argc, char **argv)
           printf("%c: is not a FujiNet drive\n", toupper((unsigned char) argv[argi][0]));
           return 1;
         }
-      } else if (stricmp(argv[argi], "RO") == 0) {
+      } else if (fn_stricmp(argv[argi], "RO") == 0) {
         readonly = 1;
-      } else if (stricmp(argv[argi], "RW") == 0) {
+      } else if (fn_stricmp(argv[argi], "RW") == 0) {
         readonly = 0;
       } else {
         usage();
