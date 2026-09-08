@@ -11,6 +11,7 @@ CFLAGS += -I$(PLATFORM_INCLUDE_DIR)
 CFLAGS += -I$(NIO_INCLUDE_DIR)
 CFLAGS += -I../fujinet-nio-driver/build/amiga/include
 CFLAGS += -DFNSVC_LIST_MAX_PAYLOAD=$(FNSVC_LIST_MAX_PAYLOAD)
+CFLAGS += -D__AMIGA__
 
 # Keep Amiga applications self-contained instead of requiring the optional
 # mathieeedoubbas.library at process startup.

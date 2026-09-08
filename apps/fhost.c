@@ -1,6 +1,10 @@
 #include "fnctl.h"
 #include "fnsvc.h"
 
+#ifdef __amigaos__
+#include "fujinet-nio.h"
+#endif
+
 #include <ctype.h>
 #include <stdio.h>
 #include <string.h>
@@ -166,13 +170,47 @@ static int parse_index(const char *s)
   return value >= 0 && value < 32 ? value : -1;
 }
 
+#ifdef __amigaos__
+static void print_transport_diag(void)
+{
+  uint8_t stage = 0;
+  uint8_t result = 0;
+  uint8_t cause = 0;
+  uint8_t native = 0;
+  uint16_t status = 0;
+
+  fn_amiga_transport_last_broker_detail(&stage, &result);
+  fn_amiga_transport_last_broker_cause(&cause);
+  fn_amiga_transport_last_serial_detail(&native, &status);
+  printf("broker stage=%u result=%u cause=%u native=%u status=%u raw=%u\n",
+         (unsigned)stage, (unsigned)result, (unsigned)cause,
+         (unsigned)native, (unsigned)status,
+         (unsigned)fnctl_last_dos_error());
+}
+#else
+static void print_transport_diag(void)
+{
+}
+#endif
+
 static int show_current(void)
 {
-  if (!host_get_current(text_buf, sizeof(text_buf), path_buf, sizeof(path_buf)) ||
-      text_buf[0] == 0) {
+  if (!host_get_current(text_buf, sizeof(text_buf), path_buf, sizeof(path_buf))) {
+    if (fnctl_last_dos_error() != 0) {
+      printf("Unable to read current host (error %u, %s)\n",
+             fnctl_last_dos_error(), FHOST_BUILD_ID);
+      print_transport_diag();
+      return 0;
+    }
     puts("HOST: (none)");
     puts("PATH: (none)");
-    return 0;
+    return 1;
+  }
+
+  if (text_buf[0] == 0) {
+    puts("HOST: (none)");
+    puts("PATH: (none)");
+    return 1;
   }
 
   printf("HOST: %s\n", text_buf);
@@ -234,6 +272,7 @@ int main(int argc, char **argv)
       if (!host_index_command(NIO_HOST_DELETE_HISTORY, index)) {
         printf("Unable to delete host history entry (error %u, %s)\n",
                fnctl_last_dos_error(), FHOST_BUILD_ID);
+        print_transport_diag();
         return 2;
       }
       return 0;
@@ -242,6 +281,7 @@ int main(int argc, char **argv)
     if (!host_index_command(NIO_HOST_SELECT_HISTORY, index)) {
       printf("Unable to select host history entry (error %u, %s)\n",
              fnctl_last_dos_error(), FHOST_BUILD_ID);
+      print_transport_diag();
       return 2;
     }
     if (!show_current())
@@ -255,13 +295,14 @@ int main(int argc, char **argv)
   }
 
   if (argc == 1) {
-    show_current();
 #ifdef __ATARI__
+    if (!show_current())
+      return 2;
     target_uri = prompt_uri();
     if (!target_uri || !*target_uri)
       return 0;
 #else
-    return 0;
+    return show_current() ? 0 : 2;
 #endif
   } else {
     target_uri = argv[1];
@@ -270,6 +311,7 @@ int main(int argc, char **argv)
   if (!host_set_current(target_uri)) {
     printf("Unable to store current host (error %u, %s)\n",
            fnctl_last_dos_error(), FHOST_BUILD_ID);
+    print_transport_diag();
     return 2;
   }
 

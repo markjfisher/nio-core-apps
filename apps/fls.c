@@ -1,6 +1,10 @@
 #ifdef __MSDOS__
 #include "fn_msdos.h"
 #endif
+#ifdef __amigaos__
+#include "fujinet-nio.h"
+#endif
+#include "fnctl.h"
 #include "fnsvc.h"
 
 #include <stdio.h>
@@ -169,6 +173,30 @@ static void print_ioctl_diag(void)
 }
 #endif
 
+#ifdef __amigaos__
+static void print_transport_diag(void)
+{
+  uint8_t stage = 0;
+  uint8_t result = 0;
+  uint8_t cause = 0;
+  uint8_t native = 0;
+  uint16_t status = 0;
+
+  fn_amiga_transport_last_broker_detail(&stage, &result);
+  fn_amiga_transport_last_broker_cause(&cause);
+  fn_amiga_transport_last_serial_detail(&native, &status);
+  printf("broker stage=%u result=%u cause=%u native=%u status=%u raw=%u\n",
+         (unsigned)stage, (unsigned)result, (unsigned)cause,
+         (unsigned)native, (unsigned)status,
+         (unsigned)fnctl_last_dos_error());
+}
+#else
+static void print_transport_diag(void)
+{
+  print_ioctl_diag();
+}
+#endif
+
 static int target_spec(const char *arg, char *uri, uint16_t uri_cap)
 {
   uint16_t len = (uint16_t) strlen(arg ? arg : "");
@@ -230,7 +258,7 @@ int main(int argc, char **argv)
            (unsigned) fnsvc_last_raw_error(),
            (unsigned) fnsvc_last_status(),
            fnsvc_last_response_len());
-    print_ioctl_diag();
+    print_transport_diag();
     return 2;
   }
 

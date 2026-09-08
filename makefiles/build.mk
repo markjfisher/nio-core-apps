@@ -33,6 +33,9 @@ PROGRAMS_EXCLUDE := $(PROGRAMS_EXCLUDE_$(TARGET))
 PROGRAMS := $(filter-out $(PROGRAMS_EXCLUDE),$(PROGRAMS_ALL))
 
 COMMON_SRCS := $(SRC_DIR)/common/fnsvc.c $(SRC_DIR)/platform/$(PLATFORM)/fnctl.c
+ifeq ($(TARGET),amiga)
+COMMON_SRCS += $(SRC_DIR)/platform/amiga/amiga_stack.c
+endif
 COMMON_OBJS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(COMMON_SRCS))
 APP_OBJS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(APP_SRCS))
 PROGRAM_BINS := $(PROGRAMS:%=$(BIN_DIR)/%$(PROGRAM_EXT))
