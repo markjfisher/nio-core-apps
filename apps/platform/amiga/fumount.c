@@ -187,7 +187,14 @@ int main(int argc, char **argv)
       goto cleanup;
     }
 
-    (void)DoPkt(handler_port, ACTION_DIE, 0, 0, 0, 0, 0);
+    result = DoPkt(handler_port, ACTION_DIE, 0, 0, 0, 0, 0);
+    if (!result) {
+      err = IoErr();
+      fprintf(stderr, "DN%d: ACTION_DIE refused (IoErr=%ld)\n",
+              unit, (long)err);
+      printf("DN%d: ACTION_DIE refused (IoErr=%ld)\n",
+             unit, (long)err);
+    }
     rc = wait_handler_retired(unit);
     if (rc != 0)
       goto cleanup;
