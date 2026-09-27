@@ -16,6 +16,7 @@
 
 #include <fujinet-amiga-disk/support.h>
 
+#ifndef __KICK13__
 typedef struct node_snapshot {
     BOOL present;
     BOOL active;
@@ -157,7 +158,95 @@ static void print_added_node(int unit) {
            (long)node.present, (unsigned long)node.task, (unsigned long)node.bpt,
            (unsigned long)node.dostype);
 }
+#endif
 
+#ifdef __KICK13__
+/*
+ * Kickstart 1.3 has no public DOS-list locking or dynamic DosNode API.  Its
+ * installer supplies static DN0:--DN7: MountList entries; FMOUNT only changes
+ * the medium in that predeclared device.  The caller must run `Mount DNx:`
+ * once after FMOUNT to start the ROM OFS handler for the selected unit.
+ */
+static void usage(void) { puts("Usage: FMOUNT slot [DN0:|...|DN7:] [RO|RW]"); }
+static int drive_to_unit(const char *s) {
+    if (!s || !*s) return -1;
+    if (s[0] >= '0' && s[0] <= '7' && s[1] == '\0') return s[0] - '0';
+    if ((s[0] == 'D' || s[0] == 'd') && (s[1] == 'N' || s[1] == 'n') &&
+        s[2] >= '0' && s[2] <= '7' && (s[3] == ':' || s[3] == '\0'))
+        return s[2] - '0';
+    return -1;
+}
+static int is_ro(const char *s) {
+    return s && (s[0] == 'R' || s[0] == 'r') &&
+           (s[1] == 'O' || s[1] == 'o') && !s[2];
+}
+static int is_rw(const char *s) {
+    return s && (s[0] == 'R' || s[0] == 'r') &&
+           (s[1] == 'W' || s[1] == 'w') && !s[2];
+}
+int main(int argc, char **argv) {
+    long slot_val = 0;
+    uint8_t slot, readonly = 0;
+    int unit, i;
+    struct MsgPort *port;
+    struct IOExtTD *request;
+    struct fujinet_disk_catalog_mount catalog;
+    LONG result;
+
+    if (argc < 2 || argc > 4 || argv[1][0] == '?') {
+        usage();
+        return 10;
+    }
+    for (i = 0; argv[1][i] >= '0' && argv[1][i] <= '9'; ++i)
+        slot_val = slot_val * 10 + argv[1][i] - '0';
+    if (argv[1][i] || slot_val > 255) {
+        puts("Bad slot");
+        return 10;
+    }
+    slot = (uint8_t)slot_val;
+    unit = (int)slot;
+    for (i = 2; i < argc; ++i) {
+        int parsed = drive_to_unit(argv[i]);
+        if (parsed >= 0)
+            unit = parsed;
+        else if (is_ro(argv[i]))
+            readonly = 1;
+        else if (is_rw(argv[i]))
+            readonly = 0;
+        else {
+            usage();
+            return 10;
+        }
+    }
+    if (unit < 0 || unit > FUJINET_DISK_MAX_UNIT) {
+        puts("Bad drive");
+        return 10;
+    }
+    port = CreatePort(NULL, 0);
+    request = port ? (struct IOExtTD *)CreateExtIO(port, sizeof(*request)) : NULL;
+    if (!request || OpenDevice((CONST_STRPTR)FUJINET_DISK_DEVICE_NAME, (ULONG)unit,
+                               (struct IORequest *)request, 0) != 0) {
+        puts("Cannot open fujinet-disk.device");
+        return 20;
+    }
+    catalog.catalog_slot = slot;
+    catalog.writable = readonly ? 0 : 1;
+    request->iotd_Req.io_Command = FUJINET_DISK_CMD_MOUNT_CATALOG;
+    request->iotd_Req.io_Data = &catalog;
+    request->iotd_Req.io_Length = sizeof(catalog);
+    result = DoIO((struct IORequest *)request);
+    CloseDevice((struct IORequest *)request);
+    DeleteExtIO((struct IORequest *)request);
+    DeletePort(port);
+    if (result != 0) {
+        fprintf(stderr, "Mount failed (%ld)\n", result);
+        return 10;
+    }
+    printf("Mounted slot %u on DN%d:; run Mount DN%d: before first access\n",
+           (unsigned)slot, unit, unit);
+    return 0;
+}
+#else
 int main(int argc, char **argv) {
     long slot_val = 0;
     uint8_t slot, readonly = 0;
@@ -282,3 +371,4 @@ fail:
     DeletePort(port);
     return 10;
 }
+#endif
