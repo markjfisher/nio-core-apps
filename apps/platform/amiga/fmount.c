@@ -163,9 +163,9 @@ static void print_added_node(int unit) {
 #ifdef __KICK13__
 /*
  * Kickstart 1.3 has no public DOS-list locking or dynamic DosNode API.  Its
- * installer supplies static DN0:--DN7: MountList entries; FMOUNT only changes
- * the medium in that predeclared device.  The caller must run `Mount DNx:`
- * once after FMOUNT to start the ROM OFS handler for the selected unit.
+ * installer supplies static DN0:--DN7: MountList entries; FMOUNT changes the
+ * medium in that predeclared device, then executes the ROM Mount command to
+ * start its OFS handler.
  */
 static void usage(void) { puts("Usage: FMOUNT slot [DN0:|...|DN7:] [RO|RW]"); }
 static int drive_to_unit(const char *s) {
@@ -192,6 +192,7 @@ int main(int argc, char **argv) {
     struct IOExtTD *request;
     struct fujinet_disk_catalog_mount catalog;
     LONG result;
+    char mount_command[16];
 
     if (argc < 2 || argc > 4 || argv[1][0] == '?') {
         usage();
@@ -242,8 +243,12 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Mount failed (%ld)\n", result);
         return 10;
     }
-    printf("Mounted slot %u on DN%d:; run Mount DN%d: before first access\n",
-           (unsigned)slot, unit, unit);
+    sprintf(mount_command, "Mount DN%d:", unit);
+    if (!Execute((STRPTR)mount_command, 0, 0)) {
+        fprintf(stderr, "Cannot start DN%d: handler\n", unit);
+        return 10;
+    }
+    printf("Mounted slot %u on DN%d:\n", (unsigned)slot, unit);
     return 0;
 }
 #else
