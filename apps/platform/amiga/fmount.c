@@ -192,7 +192,6 @@ int main(int argc, char **argv) {
     struct IOExtTD *request;
     struct fujinet_disk_catalog_mount catalog;
     LONG result;
-    char mount_command[16];
 
     if (argc < 2 || argc > 4 || argv[1][0] == '?') {
         usage();
@@ -236,18 +235,16 @@ int main(int argc, char **argv) {
     request->iotd_Req.io_Data = &catalog;
     request->iotd_Req.io_Length = sizeof(catalog);
     result = DoIO((struct IORequest *)request);
-    CloseDevice((struct IORequest *)request);
-    DeleteExtIO((struct IORequest *)request);
-    DeletePort(port);
     if (result != 0) {
+        CloseDevice((struct IORequest *)request);
+        DeleteExtIO((struct IORequest *)request);
+        DeletePort(port);
         fprintf(stderr, "Mount failed (%ld)\n", result);
         return 10;
     }
-    sprintf(mount_command, "Mount DN%d:", unit);
-    if (!Execute((STRPTR)mount_command, 0, 0)) {
-        fprintf(stderr, "Cannot start DN%d: handler\n", unit);
-        return 10;
-    }
+    CloseDevice((struct IORequest *)request);
+    DeleteExtIO((struct IORequest *)request);
+    DeletePort(port);
     printf("Mounted slot %u on DN%d:\n", (unsigned)slot, unit);
     return 0;
 }
