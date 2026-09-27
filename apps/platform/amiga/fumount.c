@@ -4,6 +4,7 @@
 #include <dos/dos.h>
 #include <dos/dosextens.h>
 #include <exec/io.h>
+#include <exec/ports.h>
 #include <clib/alib_protos.h>
 #include <proto/dos.h>
 #include <proto/exec.h>
@@ -16,11 +17,13 @@ static void usage(void)
   puts("Usage: FUMOUNT DN0:|...|DN7:");
 }
 
+#ifndef __KICK13__
 enum {
   HANDLER_ERROR = -1,
   HANDLER_INACTIVE = 0,
   HANDLER_ACTIVE = 1
 };
+#endif
 
 /* Bare 0-7, or DNx: / dnx: with a required colon and nothing after. */
 static int parse_unit(const char *s)
@@ -40,6 +43,7 @@ static int parse_unit(const char *s)
   return -1;
 }
 
+#ifndef __KICK13__
 static int get_handler_state(int unit)
 {
   char name[4];
@@ -105,19 +109,22 @@ static int wait_handler_retired(int unit)
   printf("Cannot retire DN%d: handler (busy)\n", unit);
   return 10;
 }
+#endif
 
 int main(int argc, char **argv)
 {
   int unit;
-  int handler_state;
   int rc = 0;
   char dos_name[5];
   struct MsgPort *port;
-  struct MsgPort *handler_port;
   struct IOExtTD *request;
   LONG result;
+#ifndef __KICK13__
+  struct MsgPort *handler_port;
   LONG err;
   LONG flush_result;
+  int handler_state;
+#endif
 
   if (argc != 2 || argv[1][0] == '?') {
     usage();
@@ -154,6 +161,7 @@ int main(int argc, char **argv)
     return 20;
   }
 
+#ifndef __KICK13__
   /*
    * Live handler: FLUSH (fail-safe: no DIE, no eject), then ACTION_DIE
    * until dol_Task is null. DIE failure does not eject. Inactive handler:
@@ -199,6 +207,15 @@ int main(int argc, char **argv)
     if (rc != 0)
       goto cleanup;
   }
+#else
+  /*
+   * WB1.3 has one permanent MountList entry per DN unit.  Its file-system
+   * handler remains registered across media changes; TD_EJECT is the normal
+   * removable-media transition and a later FMOUNT supplies the next disk.
+   * Do not use the WB2+ DosList-removal/ACTION_DIE lifecycle here.
+   */
+  (void)dos_name;
+#endif
 
   request->iotd_Req.io_Command = TD_EJECT;
   request->iotd_Req.io_Length = 0;
@@ -208,6 +225,7 @@ int main(int argc, char **argv)
     fprintf(stderr, "Eject failed (%ld)\n", result);
     rc = 10;
   } else {
+#ifndef __KICK13__
     /* Remove the DosList entry so the device can be unloaded.
      * Do NOT FreeDosEntry — MountList entries are system-managed. */
     char name[4];
@@ -230,9 +248,12 @@ int main(int argc, char **argv)
       }
       UnLockDosList(LDF_WRITE | LDF_DEVICES);
     }
+#endif
   }
 
+#ifndef __KICK13__
 cleanup:
+#endif
   CloseDevice((struct IORequest *)request);
   DeleteExtIO((struct IORequest *)request);
   DeletePort(port);
