@@ -25,7 +25,7 @@ typedef struct node_snapshot {
 } node_snapshot_t;
 struct ExpansionBase *ExpansionBase;
 
-static void usage(void) { puts("Usage: FMOUNT slot [DN0:|...|DN7:] [RO|RW]"); }
+static void usage(void) { puts("Usage: FMOUNT slot [DN0:|...|DN7:|HD0:|...|HD3:] [RO|RW]"); }
 static int drive_to_unit(const char *s) {
     if (!s || !*s)
         return -1;
@@ -174,6 +174,9 @@ static int drive_to_unit(const char *s) {
     if ((s[0] == 'D' || s[0] == 'd') && (s[1] == 'N' || s[1] == 'n') &&
         s[2] >= '0' && s[2] <= '7' && (s[3] == ':' || s[3] == '\0'))
         return s[2] - '0';
+    if ((s[0] == 'H' || s[0] == 'h') && (s[1] == 'D' || s[1] == 'd') &&
+        s[2] >= '0' && s[2] <= '3' && (s[3] == ':' || s[3] == '\0'))
+        return 4 + s[2] - '0';
     return -1;
 }
 static int is_ro(const char *s) {
@@ -188,6 +191,7 @@ int main(int argc, char **argv) {
     long slot_val = 0;
     uint8_t slot, readonly = 0;
     int unit, i;
+    const char *drive_label = NULL;
     struct MsgPort *port;
     struct IOExtTD *request;
     struct fujinet_disk_catalog_mount catalog;
@@ -207,9 +211,10 @@ int main(int argc, char **argv) {
     unit = (int)slot;
     for (i = 2; i < argc; ++i) {
         int parsed = drive_to_unit(argv[i]);
-        if (parsed >= 0)
+        if (parsed >= 0) {
             unit = parsed;
-        else if (is_ro(argv[i]))
+            drive_label = argv[i];
+        } else if (is_ro(argv[i]))
             readonly = 1;
         else if (is_rw(argv[i]))
             readonly = 0;
@@ -245,7 +250,10 @@ int main(int argc, char **argv) {
     CloseDevice((struct IORequest *)request);
     DeleteExtIO((struct IORequest *)request);
     DeletePort(port);
-    printf("Mounted slot %u on DN%d:\n", (unsigned)slot, unit);
+    if (drive_label != NULL)
+        printf("Mounted slot %u on %s\n", (unsigned)slot, drive_label);
+    else
+        printf("Mounted slot %u on DN%d:\n", (unsigned)slot, unit);
     return 0;
 }
 #else
