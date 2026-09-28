@@ -12,6 +12,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#define WB13_WRITEBACK_SETTLE_TICKS 250
+
 static void usage(void)
 {
   puts("Usage: FUMOUNT DN0:|...|DN7:");
@@ -215,6 +217,17 @@ int main(int argc, char **argv)
    * Do not use the WB2+ DosList-removal/ACTION_DIE lifecycle here.
    */
   (void)dos_name;
+#endif
+
+#ifdef __KICK13__
+  /*
+   * The 1.3 FFS writes volume metadata asynchronously after a CLI copy
+   * returns.  Its handler does not safely accept ACTION_FLUSH/INHIBIT packet
+   * control, so allow its normal write-back interval to finish before making
+   * removable media absent.  The target's 250 DOS ticks are the five-second
+   * write-back interval established by the WB1.3 acceptance test.
+   */
+  Delay(WB13_WRITEBACK_SETTLE_TICKS);
 #endif
 
   request->iotd_Req.io_Command = TD_EJECT;
