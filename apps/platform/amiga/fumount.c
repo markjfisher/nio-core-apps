@@ -16,7 +16,7 @@
 
 static void usage(void)
 {
-  puts("Usage: FUMOUNT DN0:|...|DN7:|HD0:|...|HD3:");
+  puts("Usage: FUMOUNT DN0:|...|DN7:|HD0:|...|HD3:|FF0:|...|FF7:");
 }
 
 #ifndef __KICK13__
@@ -48,6 +48,11 @@ static int parse_unit(const char *s)
       s[2] >= '0' && s[2] <= '3' &&
       s[3] == ':' && s[4] == '\0')
     return 4 + s[2] - '0';
+  if ((s[0] == 'F' || s[0] == 'f') &&
+      (s[1] == 'F' || s[1] == 'f') &&
+      s[2] >= '0' && s[2] <= '7' &&
+      s[3] == ':' && s[4] == '\0')
+    return s[2] - '0';
 #endif
 
   return -1;
@@ -151,6 +156,9 @@ int main(int argc, char **argv)
   if ((argv[1][0] == 'H' || argv[1][0] == 'h') &&
       (argv[1][1] == 'D' || argv[1][1] == 'd'))
     sprintf(dos_name, "HD%d:", unit - 4);
+  else if ((argv[1][0] == 'F' || argv[1][0] == 'f') &&
+           (argv[1][1] == 'F' || argv[1][1] == 'f'))
+    sprintf(dos_name, "FF%d:", unit);
   else
 #endif
     sprintf(dos_name, "DN%d:", unit);

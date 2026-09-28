@@ -163,11 +163,14 @@ static void print_added_node(int unit) {
 #ifdef __KICK13__
 /*
  * Kickstart 1.3 has no public DOS-list locking or dynamic DosNode API.  Its
- * installer supplies static DN0:--DN7: MountList entries; FMOUNT changes the
- * medium in that predeclared device, then executes the ROM Mount command to
- * start its OFS handler.
+ * installer supplies static DN0:--DN7:, HD0:--HD3:, and optional
+ * FF0:--FF7: MountList entries; FMOUNT changes the medium in that
+ * predeclared device, then executes the ROM Mount command to start its
+ * handler.
  */
-static void usage(void) { puts("Usage: FMOUNT slot [DN0:|...|DN7:] [RO|RW]"); }
+static void usage(void) {
+    puts("Usage: FMOUNT slot [DN0:|...|DN7:|HD0:|...|HD3:|FF0:|...|FF7:] [RO|RW]");
+}
 static int drive_to_unit(const char *s) {
     if (!s || !*s) return -1;
     if (s[0] >= '0' && s[0] <= '7' && s[1] == '\0') return s[0] - '0';
@@ -177,6 +180,9 @@ static int drive_to_unit(const char *s) {
     if ((s[0] == 'H' || s[0] == 'h') && (s[1] == 'D' || s[1] == 'd') &&
         s[2] >= '0' && s[2] <= '3' && (s[3] == ':' || s[3] == '\0'))
         return 4 + s[2] - '0';
+    if ((s[0] == 'F' || s[0] == 'f') && (s[1] == 'F' || s[1] == 'f') &&
+        s[2] >= '0' && s[2] <= '7' && (s[3] == ':' || s[3] == '\0'))
+        return s[2] - '0';
     return -1;
 }
 static int is_ro(const char *s) {
