@@ -16,7 +16,7 @@
 
 static void usage(void)
 {
-  puts("Usage: FUMOUNT DN0:|...|DN7:|HD0:|...|HD3:|FF0:|...|FF7:");
+  puts("Usage: FUMOUNT 0|...|7");
 }
 
 #ifndef __KICK13__
@@ -53,10 +53,48 @@ static int parse_unit(const char *s)
       s[2] >= '0' && s[2] <= '7' &&
       s[3] == ':' && s[4] == '\0')
     return s[2] - '0';
+  if ((s[0] == 'H' || s[0] == 'h') &&
+      (s[1] == 'N' || s[1] == 'n') &&
+      s[2] >= '0' && s[2] <= '1' &&
+      s[3] == ':' && s[4] == '\0')
+    return 2 + s[2] - '0';
+  if ((s[0] == 'D' || s[0] == 'd') &&
+      (s[1] == 'O' || s[1] == 'o') &&
+      s[2] >= '0' && s[2] <= '1' &&
+      s[3] == ':' && s[4] == '\0')
+    return 4 + s[2] - '0';
+  if ((s[0] == 'H' || s[0] == 'h') &&
+      (s[1] == 'O' || s[1] == 'o') &&
+      s[2] >= '0' && s[2] <= '1' &&
+      s[3] == ':' && s[4] == '\0')
+    return 6 + s[2] - '0';
 #endif
 
   return -1;
 }
+
+#ifdef __KICK13__
+static int load_active_label(int unit, char *label, size_t label_size)
+{
+  char path[32];
+  BPTR file;
+  LONG length;
+
+  if (label_size < 5)
+    return 0;
+  sprintf(path, "T:FNM%d", unit);
+  file = Open((CONST_STRPTR)path, MODE_OLDFILE);
+  if (file == 0)
+    return 0;
+  length = Read(file, (APTR)label, (LONG)(label_size - 1));
+  Close(file);
+  if (length != 4 || label[3] != ':')
+    return 0;
+  label[4] = '\0';
+  return 1;
+}
+
+#endif
 
 #ifndef __KICK13__
 static int get_handler_state(int unit)
@@ -153,12 +191,26 @@ int main(int argc, char **argv)
   }
 
 #ifdef __KICK13__
-  if ((argv[1][0] == 'H' || argv[1][0] == 'h') &&
+  if (argv[1][0] >= '0' && argv[1][0] <= '7' && argv[1][1] == '\0') {
+    if (!load_active_label(unit, dos_name, sizeof(dos_name))) {
+      fprintf(stderr, "Cannot determine active endpoint for unit %d\n", unit);
+      return 10;
+    }
+  } else if ((argv[1][0] == 'H' || argv[1][0] == 'h') &&
       (argv[1][1] == 'D' || argv[1][1] == 'd'))
     sprintf(dos_name, "HD%d:", unit - 4);
   else if ((argv[1][0] == 'F' || argv[1][0] == 'f') &&
            (argv[1][1] == 'F' || argv[1][1] == 'f'))
     sprintf(dos_name, "FF%d:", unit);
+  else if ((argv[1][0] == 'H' || argv[1][0] == 'h') &&
+           (argv[1][1] == 'N' || argv[1][1] == 'n'))
+    sprintf(dos_name, "HN%d:", unit);
+  else if ((argv[1][0] == 'D' || argv[1][0] == 'd') &&
+           (argv[1][1] == 'O' || argv[1][1] == 'o'))
+    sprintf(dos_name, "DO%d:", unit);
+  else if ((argv[1][0] == 'H' || argv[1][0] == 'h') &&
+           (argv[1][1] == 'O' || argv[1][1] == 'o'))
+    sprintf(dos_name, "HO%d:", unit);
   else
 #endif
     sprintf(dos_name, "DN%d:", unit);
@@ -231,14 +283,6 @@ int main(int argc, char **argv)
     if (rc != 0)
       goto cleanup;
   }
-#else
-  /*
-   * WB1.3 has one permanent MountList entry per DN unit.  Its file-system
-   * handler remains registered across media changes; TD_EJECT is the normal
-   * removable-media transition and a later FMOUNT supplies the next disk.
-   * Do not use the WB2+ DosList-removal/ACTION_DIE lifecycle here.
-   */
-  (void)dos_name;
 #endif
 
 #ifdef __KICK13__
@@ -250,6 +294,7 @@ int main(int argc, char **argv)
    * write-back interval established by the WB1.3 acceptance test.
    */
   Delay(WB13_WRITEBACK_SETTLE_TICKS);
+
 #endif
 
   request->iotd_Req.io_Command = TD_EJECT;

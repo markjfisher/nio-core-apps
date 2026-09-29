@@ -163,24 +163,35 @@ static void print_added_node(int unit) {
 #ifdef __KICK13__
 /*
  * Kickstart 1.3 has no public DOS-list locking or dynamic DosNode API.  Its
- * installer supplies static DN0:--DN7:, HD0:--HD3:, and optional
- * FF0:--FF7: MountList entries; FMOUNT changes the medium in that
- * predeclared device, then executes the ROM Mount command to start its
- * handler.
+ * installer supplies four static, initially inactive MountList entries for
+ * each unit: DN (DD/FFS), HN (HD/FFS), DO (DD/OFS), and HO (HD/OFS).
+ * FMOUNT inspects the catalogue image before attaching it, picks the one
+ * compatible entry, changes the medium in that unit, then starts the ROM
+ * Mount command for that entry.  The user consequently selects a unit, not
+ * an AmigaDOS geometry or filesystem handler.
  */
 static void usage(void) {
-    puts("Usage: FMOUNT slot [DN0:|...|DN7:|HD0:|...|HD3:|FF0:|...|FF7:] [RO|RW]");
+    puts("Usage: FMOUNT slot [0|...|7] [RO|RW]");
 }
 static int drive_to_unit(const char *s) {
     if (!s || !*s) return -1;
     if (s[0] >= '0' && s[0] <= '7' && s[1] == '\0') return s[0] - '0';
     if ((s[0] == 'D' || s[0] == 'd') && (s[1] == 'N' || s[1] == 'n') &&
-        s[2] >= '0' && s[2] <= '7' && (s[3] == ':' || s[3] == '\0'))
+        s[2] >= '0' && s[2] <= '1' && (s[3] == ':' || s[3] == '\0'))
         return s[2] - '0';
     if ((s[0] == 'H' || s[0] == 'h') && (s[1] == 'D' || s[1] == 'd') &&
         s[2] >= '0' && s[2] <= '3' && (s[3] == ':' || s[3] == '\0'))
         return 4 + s[2] - '0';
     if ((s[0] == 'F' || s[0] == 'f') && (s[1] == 'F' || s[1] == 'f') &&
+        s[2] >= '0' && s[2] <= '1' && (s[3] == ':' || s[3] == '\0'))
+        return 2 + s[2] - '0';
+    if ((s[0] == 'H' || s[0] == 'h') && (s[1] == 'N' || s[1] == 'n') &&
+        s[2] >= '0' && s[2] <= '1' && (s[3] == ':' || s[3] == '\0'))
+        return 4 + s[2] - '0';
+    if ((s[0] == 'D' || s[0] == 'd') && (s[1] == 'O' || s[1] == 'o') &&
+        s[2] >= '0' && s[2] <= '1' && (s[3] == ':' || s[3] == '\0'))
+        return 6 + s[2] - '0';
+    if ((s[0] == 'H' || s[0] == 'h') && (s[1] == 'O' || s[1] == 'o') &&
         s[2] >= '0' && s[2] <= '7' && (s[3] == ':' || s[3] == '\0'))
         return s[2] - '0';
     return -1;
@@ -193,14 +204,49 @@ static int is_rw(const char *s) {
     return s && (s[0] == 'R' || s[0] == 'r') &&
            (s[1] == 'W' || s[1] == 'w') && !s[2];
 }
+static void record_active_label(int unit, const char *label) {
+    char path[32];
+    BPTR file;
+    sprintf(path, "T:FNM%d", unit);
+    file = Open((CONST_STRPTR)path, MODE_NEWFILE);
+    if (file != 0) {
+        (void)Write(file, (APTR)label, (LONG)strlen(label));
+        Close(file);
+    }
+}
+static int load_active_label(int unit, char *label, size_t label_size) {
+    char path[32];
+    BPTR file;
+    LONG length;
+    if (label_size < 5)
+        return 0;
+    sprintf(path, "T:FNM%d", unit);
+    file = Open((CONST_STRPTR)path, MODE_OLDFILE);
+    if (file == 0)
+        return 0;
+    length = Read(file, (APTR)label, (LONG)(label_size - 1));
+    Close(file);
+    if (length >= 0 && (size_t)length < label_size)
+        label[length] = '\0';
+    printf("FMOUNT STATE %s length=%ld value=%s\n", path, (long)length, label);
+    if (length != 4 || label[3] != ':')
+        return 0;
+    label[4] = '\0';
+    return 1;
+}
 int main(int argc, char **argv) {
     long slot_val = 0;
     uint8_t slot, readonly = 0;
     int unit, i;
-    const char *drive_label = NULL;
+    char drive_label[5];
+    const char *requested_label = NULL;
+    char mount_command[20];
     struct MsgPort *port;
     struct IOExtTD *request;
     struct fujinet_disk_catalog_mount catalog;
+    struct fujinet_disk_catalog_inspection inspection;
+    fujinet_disk_media_profile_t profile;
+    uint32_t dostype;
     LONG result;
 
     if (argc < 2 || argc > 4 || argv[1][0] == '?') {
@@ -219,7 +265,7 @@ int main(int argc, char **argv) {
         int parsed = drive_to_unit(argv[i]);
         if (parsed >= 0) {
             unit = parsed;
-            drive_label = argv[i];
+            requested_label = argv[i];
         } else if (is_ro(argv[i]))
             readonly = 1;
         else if (is_rw(argv[i]))
@@ -240,6 +286,28 @@ int main(int argc, char **argv) {
         puts("Cannot open fujinet-disk.device");
         return 20;
     }
+    memset(&inspection, 0, sizeof(inspection));
+    inspection.catalog_slot = slot;
+    request->iotd_Req.io_Command = FUJINET_DISK_CMD_INSPECT_CATALOG;
+    request->iotd_Req.io_Data = &inspection;
+    request->iotd_Req.io_Length = sizeof(inspection);
+    result = DoIO((struct IORequest *)request);
+    if (result != 0 ||
+        fujinet_disk_classify_media_profile(&inspection.inspection.media, &profile) != FN_OK ||
+        fujinet_disk_classify_filesystem(inspection.inspection.boot_bytes,
+                                         inspection.inspection.boot_length, &dostype) != FN_OK) {
+        CloseDevice((struct IORequest *)request);
+        DeleteExtIO((struct IORequest *)request);
+        DeletePort(port);
+        puts("Unsupported candidate media");
+        return 10;
+    }
+    if (requested_label == NULL) {
+        puts("WB1.3 requires a static endpoint (DN0:, HN0:, DO0:, or HO0:)");
+        return 10;
+    }
+    strncpy(drive_label, requested_label, 4);
+    drive_label[4] = '\0';
     catalog.catalog_slot = slot;
     catalog.writable = readonly ? 0 : 1;
     request->iotd_Req.io_Command = FUJINET_DISK_CMD_MOUNT_CATALOG;
@@ -256,10 +324,14 @@ int main(int argc, char **argv) {
     CloseDevice((struct IORequest *)request);
     DeleteExtIO((struct IORequest *)request);
     DeletePort(port);
-    if (drive_label != NULL)
-        printf("Mounted slot %u on %s\n", (unsigned)slot, drive_label);
-    else
-        printf("Mounted slot %u on DN%d:\n", (unsigned)slot, unit);
+    sprintf(mount_command, "C:Mount %s", drive_label);
+    if (!Execute((CONST_STRPTR)mount_command, 0, 0)) {
+        fprintf(stderr, "Cannot start %s\n", drive_label);
+        return 10;
+    }
+    printf("Mounted slot %u on %s (%s, %s)\n", (unsigned)slot, drive_label,
+           profile.kind == FUJINET_DISK_MEDIA_PROFILE_DD_ADF ? "DD" : "HD",
+           dostype == FUJINET_AMIGA_DOS_FFS ? "FFS" : "OFS");
     return 0;
 }
 #else
