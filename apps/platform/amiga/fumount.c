@@ -17,7 +17,7 @@
 static void usage(void)
 {
 #ifdef __KICK13__
-  puts("Usage: FUMOUNT DN0:|DN1:|HN0:|HN1:|DO0:|DO1:|HO0:|HO1:");
+  puts("Usage: FUMOUNT 0|1|DN0:|DN1:|HN0:|HN1:|DO0:|DO1:|HO0:|HO1:");
 #else
   puts("Usage: FUMOUNT 0|...|7");
 #endif
@@ -76,6 +76,38 @@ static int parse_endpoint(const char *s, char dos_name[5])
   if (first == 'H' && second == 'O')
     return 6 + index;
   return -1;
+}
+static int load_logical_endpoint(int index, char dos_name[5])
+{
+  static const char *const paths[] = { "T:FNLA", "T:FNLB" };
+  BPTR file;
+  LONG length;
+
+  file = Open((CONST_STRPTR)paths[index], MODE_OLDFILE);
+  if (file == 0)
+    return -1;
+  length = Read(file, (APTR)dos_name, 4);
+  Close(file);
+  if (length != 4 || dos_name[3] != ':')
+    return -1;
+  dos_name[4] = '\0';
+  return parse_endpoint(dos_name, dos_name);
+}
+static void clear_logical_endpoint(int index)
+{
+  static const char *const paths[] = { "T:FNLA", "T:FNLB" };
+  (void)DeleteFile((CONST_STRPTR)paths[index]);
+}
+static void clear_matching_logical_endpoint(const char *label)
+{
+  int index;
+  char recorded[5];
+  for (index = 0; index < 2; ++index) {
+    if (load_logical_endpoint(index, recorded) >= 0 &&
+        recorded[0] == label[0] && recorded[1] == label[1] &&
+        recorded[2] == label[2])
+      clear_logical_endpoint(index);
+  }
 }
 #endif
 
@@ -151,6 +183,7 @@ int main(int argc, char **argv)
 {
   int unit;
   int rc = 0;
+  int logical_unit = -1;
   char dos_name[5];
   struct MsgPort *port;
   struct IOExtTD *request;
@@ -168,7 +201,12 @@ int main(int argc, char **argv)
   }
 
 #ifdef __KICK13__
-  unit = parse_endpoint(argv[1], dos_name);
+  if (argv[1][0] >= '0' && argv[1][0] <= '1' && argv[1][1] == '\0') {
+    logical_unit = argv[1][0] - '0';
+    unit = load_logical_endpoint(logical_unit, dos_name);
+  } else {
+    unit = parse_endpoint(argv[1], dos_name);
+  }
 #else
   unit = parse_unit(argv[1]);
 #endif
@@ -306,6 +344,13 @@ cleanup:
 
   if (rc != 0)
     return rc;
+
+#ifdef __KICK13__
+  if (logical_unit >= 0)
+    clear_logical_endpoint(logical_unit);
+  else
+    clear_matching_logical_endpoint(dos_name);
+#endif
 
   printf("Ejected %s\n", dos_name);
   return 0;

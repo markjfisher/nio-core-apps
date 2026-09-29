@@ -170,7 +170,7 @@ static void print_added_node(int unit) {
  * safely exchange an active DOS handler for another filesystem or geometry.
  */
 static void usage(void) {
-    puts("Usage: FMOUNT slot DN0:|DN1:|HN0:|HN1:|DO0:|DO1:|HO0:|HO1: [RO|RW]");
+    puts("Usage: FMOUNT slot 0|1|DN0:|DN1:|HN0:|HN1:|DO0:|DO1:|HO0:|HO1: [RO|RW]");
 }
 typedef struct wb13_endpoint {
     int unit;
@@ -214,6 +214,26 @@ static int parse_endpoint(const char *s, wb13_endpoint_t *endpoint) {
     }
     return 1;
 }
+static int parse_logical_unit(const char *s) {
+    return s && s[0] >= '0' && s[0] <= '1' && s[1] == '\0' ? s[0] - '0' : -1;
+}
+static void endpoint_for_media(int index, fujinet_disk_media_profile_kind_t profile,
+                               uint32_t dostype, wb13_endpoint_t *endpoint) {
+    endpoint->label[2] = (char)('0' + index);
+    endpoint->label[3] = ':';
+    endpoint->label[4] = '\0';
+    endpoint->profile = profile;
+    endpoint->dostype = dostype;
+    if (profile == FUJINET_DISK_MEDIA_PROFILE_DD_ADF && dostype == FUJINET_AMIGA_DOS_FFS) {
+        endpoint->label[0] = 'D'; endpoint->label[1] = 'N'; endpoint->unit = index;
+    } else if (profile == FUJINET_DISK_MEDIA_PROFILE_HD_ADF && dostype == FUJINET_AMIGA_DOS_FFS) {
+        endpoint->label[0] = 'H'; endpoint->label[1] = 'N'; endpoint->unit = 2 + index;
+    } else if (profile == FUJINET_DISK_MEDIA_PROFILE_DD_ADF && dostype == FUJINET_AMIGA_DOS_OFS) {
+        endpoint->label[0] = 'D'; endpoint->label[1] = 'O'; endpoint->unit = 4 + index;
+    } else {
+        endpoint->label[0] = 'H'; endpoint->label[1] = 'O'; endpoint->unit = 6 + index;
+    }
+}
 static int is_ro(const char *s) {
     return s && (s[0] == 'R' || s[0] == 'r') &&
            (s[1] == 'O' || s[1] == 'o') && !s[2];
@@ -246,10 +266,33 @@ static int endpoint_was_started(int unit, const char *label) {
     return length == 4 && recorded[0] == label[0] && recorded[1] == label[1] &&
            recorded[2] == label[2] && recorded[3] == ':';
 }
+static int logical_unit_is_mounted(int index, char label[5]) {
+    static const char *const paths[] = { "T:FNLA", "T:FNLB" };
+    BPTR file;
+    LONG length;
+    file = Open((CONST_STRPTR)paths[index], MODE_OLDFILE);
+    if (file == 0)
+        return 0;
+    length = Read(file, (APTR)label, 4);
+    Close(file);
+    if (length != 4 || label[3] != ':')
+        return 0;
+    label[4] = '\0';
+    return 1;
+}
+static void record_logical_unit(int index, const char *label) {
+    static const char *const paths[] = { "T:FNLA", "T:FNLB" };
+    BPTR file;
+    file = Open((CONST_STRPTR)paths[index], MODE_NEWFILE);
+    if (file != 0) {
+        (void)Write(file, (APTR)label, 4);
+        Close(file);
+    }
+}
 int main(int argc, char **argv) {
     long slot_val = 0;
     uint8_t slot, readonly = 0;
-    int unit = -1, i;
+    int unit = -1, logical_unit = -1, explicit_endpoint = 0, i;
     wb13_endpoint_t endpoint;
     char mount_command[20];
     struct MsgPort *port;
@@ -272,9 +315,20 @@ int main(int argc, char **argv) {
     }
     slot = (uint8_t)slot_val;
     for (i = 2; i < argc; ++i) {
-        if (parse_endpoint(argv[i], &endpoint))
+        if (parse_endpoint(argv[i], &endpoint)) {
+            if (explicit_endpoint || logical_unit >= 0) {
+                usage();
+                return 10;
+            }
             unit = endpoint.unit;
-        else if (is_ro(argv[i]))
+            explicit_endpoint = 1;
+        } else if (parse_logical_unit(argv[i]) >= 0) {
+            if (explicit_endpoint || logical_unit >= 0) {
+                usage();
+                return 10;
+            }
+            logical_unit = parse_logical_unit(argv[i]);
+        } else if (is_ro(argv[i]))
             readonly = 1;
         else if (is_rw(argv[i]))
             readonly = 0;
@@ -283,10 +337,14 @@ int main(int argc, char **argv) {
             return 10;
         }
     }
-    if (unit < 0) {
-        puts("WB1.3 requires a static endpoint");
+    if (unit < 0 && logical_unit < 0) {
+        puts("WB1.3 requires a logical unit or static endpoint");
         return 10;
     }
+    /* Inspect through unit zero first for a logical selection; every unit
+     * exposes the same catalogue inspection command. */
+    if (logical_unit >= 0)
+        unit = 0;
     port = CreatePort(NULL, 0);
     request = port ? (struct IOExtTD *)CreateExtIO(port, sizeof(*request)) : NULL;
     if (!request || OpenDevice((CONST_STRPTR)FUJINET_DISK_DEVICE_NAME, (ULONG)unit,
@@ -309,6 +367,29 @@ int main(int argc, char **argv) {
         DeletePort(port);
         puts("Unsupported candidate media");
         return 10;
+    }
+    if (logical_unit >= 0) {
+        char occupied_label[5];
+        if (logical_unit_is_mounted(logical_unit, occupied_label)) {
+            CloseDevice((struct IORequest *)request);
+            DeleteExtIO((struct IORequest *)request);
+            DeletePort(port);
+            fprintf(stderr, "Logical unit %d is mounted on %s; FUMOUNT %d first\n",
+                    logical_unit, occupied_label, logical_unit);
+            return 10;
+        }
+        endpoint_for_media(logical_unit, profile.kind, dostype, &endpoint);
+        unit = endpoint.unit;
+        CloseDevice((struct IORequest *)request);
+        DeleteExtIO((struct IORequest *)request);
+        DeletePort(port);
+        port = CreatePort(NULL, 0);
+        request = port ? (struct IOExtTD *)CreateExtIO(port, sizeof(*request)) : NULL;
+        if (!request || OpenDevice((CONST_STRPTR)FUJINET_DISK_DEVICE_NAME, (ULONG)unit,
+                                   (struct IORequest *)request, 0) != 0) {
+            puts("Cannot open fujinet-disk.device");
+            return 20;
+        }
     }
     if (profile.kind != endpoint.profile || dostype != endpoint.dostype) {
         CloseDevice((struct IORequest *)request);
@@ -343,6 +424,8 @@ int main(int argc, char **argv) {
         }
         record_started_endpoint(unit, endpoint.label);
     }
+    if (logical_unit >= 0)
+        record_logical_unit(logical_unit, endpoint.label);
     printf("Mounted slot %u on %s (%s, %s)\n", (unsigned)slot, endpoint.label,
            profile.kind == FUJINET_DISK_MEDIA_PROFILE_DD_ADF ? "DD" : "HD",
            dostype == FUJINET_AMIGA_DOS_FFS ? "FFS" : "OFS");
