@@ -374,6 +374,30 @@ int fnsvc_set_mount(uint8_t slot, const char *uri, const char *mode, uint8_t ena
   return 1;
 }
 
+static uint8_t disk_last_error = FN_DISK_ERR_NONE;
+
+/* Record a DiskDevice call's outcome. NIO sends {version, DiskError} with
+ * every failure, so fnsvc_disk_last_error() can say exactly why. */
+static int disk_result(int called, uint8_t status, uint16_t resp_len)
+{
+  if (!called) {
+    disk_last_error = FN_DISK_ERR_UNREPORTED;
+    return 0;
+  }
+  if (status == FNSVC_STATUS_OK) {
+    disk_last_error = FN_DISK_ERR_NONE;
+    return 1;
+  }
+  disk_last_error = (resp_len == 2 && resp_buf[0] == NIO_DISK_VERSION)
+                        ? resp_buf[1] : FN_DISK_ERR_UNREPORTED;
+  return 0;
+}
+
+uint8_t fnsvc_disk_last_error(void)
+{
+  return disk_last_error;
+}
+
 int fnsvc_disk_mount(uint8_t slot, const char *uri, uint8_t readonly,
                      uint16_t sector_size_hint)
 {
@@ -397,9 +421,10 @@ int fnsvc_disk_mount(uint8_t slot, const char *uri, uint8_t readonly,
   memcpy(&req_buf[off], uri, uri_len);
   off += uri_len;
 
-  return service_call(NIO_DEVICEID_DISK, NIO_DISK_MOUNT,
-                      req_buf, off, resp_buf, 32, &status, &resp_len) &&
-         status == FNSVC_STATUS_OK;
+  if (!service_call(NIO_DEVICEID_DISK, NIO_DISK_MOUNT,
+                      req_buf, off, resp_buf, 32, &status, &resp_len))
+    return disk_result(0, 0, 0);
+  return disk_result(1, status, resp_len);
 }
 
 int fnsvc_disk_list_mounts(uint16_t start, char *text, uint16_t text_cap,
@@ -422,9 +447,13 @@ int fnsvc_disk_list_mounts(uint16_t start, char *text, uint16_t text_cap,
   if (!service_call(NIO_DEVICEID_DISK, NIO_DISK_LIST_MOUNTS,
                     req_buf, 10, resp_buf, sizeof(resp_buf),
                     &status, &resp_len))
+  {
+    disk_result(0, 0, 0);
     return fail(FNSVC_ERR_TRANSPORT);
+  }
   last_status = status;
   last_response_len = resp_len;
+  disk_result(1, status, resp_len);
   if (status != FNSVC_STATUS_OK)
     return fail(FNSVC_ERR_STATUS);
   if (resp_len < 10 || resp_buf[0] != NIO_DISK_VERSION)
@@ -452,9 +481,10 @@ int fnsvc_disk_unmount(uint8_t slot)
   req_buf[0] = NIO_DISK_VERSION;
   req_buf[1] = (uint8_t) (slot + 1);
 
-  return service_call(NIO_DEVICEID_DISK, NIO_DISK_UNMOUNT,
-                      req_buf, 2, resp_buf, 16, &status, &resp_len) &&
-         status == FNSVC_STATUS_OK;
+  if (!service_call(NIO_DEVICEID_DISK, NIO_DISK_UNMOUNT,
+                      req_buf, 2, resp_buf, 16, &status, &resp_len))
+    return disk_result(0, 0, 0);
+  return disk_result(1, status, resp_len);
 }
 
 int fnsvc_disk_restore_boot(uint8_t slot)
@@ -474,10 +504,14 @@ int fnsvc_disk_restore_boot(uint8_t slot)
 
   if (!service_call(NIO_DEVICEID_DISK, NIO_DISK_RESTORE_BOOT,
                     req_buf, 2, resp_buf, 16, &status, &resp_len))
+  {
+    disk_result(0, 0, 0);
     return fail(FNSVC_ERR_TRANSPORT);
+  }
 
   last_status = status;
   last_response_len = resp_len;
+  disk_result(1, status, resp_len);
 
   if (status != FNSVC_STATUS_OK)
     return fail(FNSVC_ERR_STATUS);

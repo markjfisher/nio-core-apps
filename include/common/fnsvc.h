@@ -58,6 +58,10 @@ int fnsvc_set_mount(uint8_t slot, const char *uri, const char *mode, uint8_t ena
 int fnsvc_disk_mount(uint8_t slot, const char *uri, uint8_t readonly,
                      uint16_t sector_size_hint);
 int fnsvc_disk_unmount(uint8_t slot);
+/* FN_DISK_ERR_* (fujinet-nio.h) for the most recent fnsvc_disk_*() call:
+ * FN_DISK_ERR_NONE after success, the exact reason after a failure NIO
+ * explained, otherwise FN_DISK_ERR_UNREPORTED. */
+uint8_t fnsvc_disk_last_error(void);
 int fnsvc_disk_restore_boot(uint8_t slot);
 int fnsvc_disk_list_mounts(uint16_t start, char *text, uint16_t text_cap,
                            uint16_t *entry_count, uint8_t *more);

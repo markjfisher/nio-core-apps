@@ -1,5 +1,6 @@
 #include "fnctl.h"
 #include "fnsvc.h"
+#include "fujinet-nio.h"
 
 #include <ctype.h>
 #include <stdio.h>
@@ -10,6 +11,22 @@
  * platform whose raw media differs (Apple II 256, Atari 128/256) should pass
  * its own. */
 #define FMOUNT_SECTOR_SIZE_HINT 512
+
+/* Why NIO refused the mount, for the FN_DISK_ERR_* codes a user can act on. */
+static const char *mount_failure(uint8_t error)
+{
+  switch (error) {
+  case FN_DISK_ERR_GEOMETRY_REQUIRED:
+    return "NIO cannot tell this image's sector size";
+  case FN_DISK_ERR_INVALID_GEOMETRY: return "sector size does not fit the image";
+  case FN_DISK_ERR_FILE_NOT_FOUND:   return "image not found";
+  case FN_DISK_ERR_NO_SUCH_FILESYSTEM: return "no such filesystem";
+  case FN_DISK_ERR_BAD_IMAGE:        return "image is damaged or mislabelled";
+  case FN_DISK_ERR_UNSUPPORTED_TYPE: return "unsupported image type";
+  case FN_DISK_ERR_OPEN_FAILED:      return "image could not be opened";
+  default:                           return 0;
+  }
+}
 static int fn_stricmp(const char *a, const char *b)
 {
   unsigned char ca;
@@ -164,7 +181,14 @@ int main(int argc, char **argv)
 
   if (!fnsvc_disk_mount((uint8_t) unit, mount.uri, readonly,
                         FMOUNT_SECTOR_SIZE_HINT)) {
-    puts("Disk mount failed");
+    {
+      const uint8_t error = fnsvc_disk_last_error();
+      const char *why = mount_failure(error);
+      if (why)
+        printf("Disk mount failed: %s (error %u)\n", why, (unsigned) error);
+      else
+        puts("Disk mount failed");
+    }
     return 2;
   }
 
