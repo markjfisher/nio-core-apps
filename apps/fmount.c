@@ -6,18 +6,17 @@
 #include <stdio.h>
 #include <string.h>
 
-/* Sector size NIO should use for an image whose geometry it cannot work out
- * from content or an unambiguous extension. 512 has always been sent; a
- * platform whose raw media differs (Apple II 256, Atari 128/256) should pass
- * its own. */
-#define FMOUNT_SECTOR_SIZE_HINT 512
+/* No sector size by default: NIO identifies known formats itself, and asks
+ * (GeometryRequired) for anything it cannot, which the user answers with
+ * SS=<bytes>. A fixed default would be a guess for such media. */
+#define FMOUNT_SECTOR_SIZE_HINT 0
 
 /* Why NIO refused the mount, for the FN_DISK_ERR_* codes a user can act on. */
 static const char *mount_failure(uint8_t error)
 {
   switch (error) {
   case FN_DISK_ERR_GEOMETRY_REQUIRED:
-    return "NIO cannot tell this image's sector size";
+    return "NIO cannot tell this image's sector size; add SS=<bytes>";
   case FN_DISK_ERR_INVALID_GEOMETRY: return "sector size does not fit the image";
   case FN_DISK_ERR_FILE_NOT_FOUND:   return "image not found";
   case FN_DISK_ERR_NO_SUCH_FILESYSTEM: return "no such filesystem";
@@ -43,7 +42,26 @@ static int fn_stricmp(const char *a, const char *b)
 
 static void usage(void)
 {
-  puts("Usage: FMOUNT slot [drive:] [RO|RW]");
+  puts("Usage: FMOUNT slot [drive:] [RO|RW] [SS=bytes]");
+  puts("SS= sector size, for images NIO cannot identify");
+}
+
+/* A block size in bytes: 128, 256, ... 4096. */
+static int parse_sector_size(const char *s, uint16_t *out)
+{
+  uint16_t v = 0;
+
+  if (!*s)
+    return 0;
+  for (; *s; s++) {
+    if (*s < '0' || *s > '9' || v > 409)
+      return 0;
+    v = (uint16_t) (v * 10 + (uint16_t) (*s - '0'));
+  }
+  if (v < 128 || v > 4096 || (v & (v - 1)) != 0)
+    return 0;
+  *out = v;
+  return 1;
 }
 
 static fnsvc_mount_t mount;
@@ -51,6 +69,7 @@ static fnsvc_mount_t mount;
 static char input_slot[4];
 static char input_drive[4];
 static char input_mode[4];
+static char input_ss[6];
 #endif
 
 static int drive_to_unit(const char *s)
@@ -82,7 +101,8 @@ static void trim_line(char *s)
     *p = 0;
 }
 
-static int prompt_args(uint8_t *slot, int *unit, uint8_t *readonly)
+static int prompt_args(uint8_t *slot, int *unit, uint8_t *readonly,
+                       uint16_t *sector_size)
 {
   printf("Slot: ");
   fflush(stdout);
@@ -123,6 +143,14 @@ static int prompt_args(uint8_t *slot, int *unit, uint8_t *readonly)
       return 0;
   }
 
+  printf("Sector size (blank=auto): ");
+  fflush(stdout);
+  if (!fgets(input_ss, sizeof(input_ss), stdin))
+    input_ss[0] = 0;
+  trim_line(input_ss);
+  if (input_ss[0] && !parse_sector_size(input_ss, sector_size))
+    return 0;
+
   return 1;
 }
 #endif
@@ -132,17 +160,18 @@ int main(int argc, char **argv)
   uint8_t slot;
   int unit;
   uint8_t readonly = 0;
+  uint16_t sector_size = FMOUNT_SECTOR_SIZE_HINT;
   int argi;
 
 #ifdef __ATARI__
   if (argc == 1) {
-    if (!prompt_args(&slot, &unit, &readonly)) {
+    if (!prompt_args(&slot, &unit, &readonly, &sector_size)) {
       usage();
       return 1;
     }
   } else
 #endif
-  if (argc < 2 || argc > 4 || (argc > 1 && argv[1][0] == '?')) {
+  if (argc < 2 || argc > 5 || (argc > 1 && argv[1][0] == '?')) {
     usage();
     return 1;
   } else {
@@ -162,6 +191,13 @@ int main(int argc, char **argv)
         readonly = 1;
       } else if (fn_stricmp(argv[argi], "RW") == 0) {
         readonly = 0;
+      } else if (toupper((unsigned char) argv[argi][0]) == 'S' &&
+                 toupper((unsigned char) argv[argi][1]) == 'S' &&
+                 argv[argi][2] == '=') {
+        if (!parse_sector_size(argv[argi] + 3, &sector_size)) {
+          puts("Bad sector size (128, 256, 512 ... 4096)");
+          return 1;
+        }
       } else {
         usage();
         return 1;
@@ -180,7 +216,7 @@ int main(int argc, char **argv)
   }
 
   if (!fnsvc_disk_mount((uint8_t) unit, mount.uri, readonly,
-                        FMOUNT_SECTOR_SIZE_HINT)) {
+                        sector_size)) {
     {
       const uint8_t error = fnsvc_disk_last_error();
       const char *why = mount_failure(error);
