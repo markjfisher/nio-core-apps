@@ -4,6 +4,12 @@
 #include <ctype.h>
 #include <stdio.h>
 #include <string.h>
+
+/* Sector size NIO should use for an image whose geometry it cannot work out
+ * from content or an unambiguous extension. 512 has always been sent; a
+ * platform whose raw media differs (Apple II 256, Atari 128/256) should pass
+ * its own. */
+#define FMOUNT_SECTOR_SIZE_HINT 512
 static int fn_stricmp(const char *a, const char *b)
 {
   unsigned char ca;
@@ -156,7 +162,8 @@ int main(int argc, char **argv)
     return 2;
   }
 
-  if (!fnsvc_disk_mount((uint8_t) unit, mount.uri, readonly)) {
+  if (!fnsvc_disk_mount((uint8_t) unit, mount.uri, readonly,
+                        FMOUNT_SECTOR_SIZE_HINT)) {
     puts("Disk mount failed");
     return 2;
   }

@@ -374,7 +374,8 @@ int fnsvc_set_mount(uint8_t slot, const char *uri, const char *mode, uint8_t ena
   return 1;
 }
 
-int fnsvc_disk_mount(uint8_t slot, const char *uri, uint8_t readonly)
+int fnsvc_disk_mount(uint8_t slot, const char *uri, uint8_t readonly,
+                     uint16_t sector_size_hint)
 {
   uint8_t status;
   uint16_t resp_len;
@@ -389,7 +390,7 @@ int fnsvc_disk_mount(uint8_t slot, const char *uri, uint8_t readonly)
   req_buf[off++] = (uint8_t) (slot + 1);
   req_buf[off++] = readonly ? 0x01 : 0x00;
   req_buf[off++] = 0x00;
-  put_u16le(&req_buf[off], 512);
+  put_u16le(&req_buf[off], sector_size_hint);
   off += 2;
   put_u16le(&req_buf[off], uri_len);
   off += 2;
