@@ -193,6 +193,7 @@ int main(int argc, char **argv)
   LONG err;
   LONG flush_result;
   int handler_state;
+  BOOL inhibited = FALSE;
 #endif
 
   if (argc != 2 || argv[1][0] == '?') {
@@ -278,14 +279,52 @@ int main(int argc, char **argv)
     result = DoPkt(handler_port, ACTION_DIE, 0, 0, 0, 0, 0);
     if (!result) {
       err = IoErr();
-      fprintf(stderr, "DN%d: ACTION_DIE refused (IoErr=%ld)\n",
-              unit, (long)err);
-      printf("DN%d: ACTION_DIE refused (IoErr=%ld)\n",
-             unit, (long)err);
+      if (err == ERROR_ACTION_NOT_KNOWN) {
+        /*
+         * Some filesystem handlers (WB3.1's FFS 40.1, at least) never
+         * implemented ACTION_DIE, so it can't tell us whether anything
+         * is still using the volume. ACTION_DISK_INFO (what Info() sends)
+         * predates ACTION_DIE and reports that regardless: id_InUse covers
+         * open files and locks, so it stands in for the busy check
+         * ACTION_DIE would otherwise have made. Sent straight to the
+         * handler, not via a fresh Lock() — a lock taken just to ask
+         * would itself count as "in use" and always report busy.
+         */
+        struct InfoData info;
+        BOOL busy;
+
+        printf("DN%d: handler has no ACTION_DIE (IoErr=%ld); checking activity\n",
+               unit, (long)err);
+        memset(&info, 0, sizeof(info));
+        busy = !DoPkt(handler_port, ACTION_DISK_INFO, MKBADDR(&info), 0, 0, 0, 0) ||
+               info.id_InUse != 0;
+        if (busy) {
+          fprintf(stderr, "Cannot retire DN%d: handler (busy)\n", unit);
+          printf("Cannot retire DN%d: handler (busy)\n", unit);
+          rc = 10;
+          goto cleanup;
+        }
+        if (!Inhibit((CONST_STRPTR)dos_name, DOSTRUE)) {
+          fprintf(stderr, "Cannot inhibit %s\n", dos_name);
+          printf("Cannot inhibit %s\n", dos_name);
+          rc = 10;
+          goto cleanup;
+        }
+        inhibited = TRUE;
+      } else {
+        fprintf(stderr, "DN%d: ACTION_DIE refused (IoErr=%ld)\n",
+                unit, (long)err);
+        printf("DN%d: ACTION_DIE refused (IoErr=%ld)\n",
+               unit, (long)err);
+        rc = wait_handler_retired(unit);
+        if (rc != 0)
+          goto cleanup;
+      }
+    } else {
+      rc = wait_handler_retired(unit);
+      if (rc != 0)
+        goto cleanup;
     }
-    rc = wait_handler_retired(unit);
-    if (rc != 0)
-      goto cleanup;
   }
 #endif
 
@@ -304,6 +343,19 @@ int main(int argc, char **argv)
   request->iotd_Req.io_Command = TD_EJECT;
   request->iotd_Req.io_Length = 0;
   result = DoIO((struct IORequest *)request);
+
+#ifndef __KICK13__
+  if (inhibited && result != 0 && !Inhibit((CONST_STRPTR)dos_name, DOSFALSE)) {
+    /*
+     * Eject failed: the media is still there, so restore normal access.
+     * On success, leave the handler inhibited — un-inhibiting it here
+     * makes the filesystem revalidate the now-missing disk and raise a
+     * "Please replace volume" requester instead of just going away with
+     * the DosList entry below.
+     */
+    fprintf(stderr, "Cannot uninhibit %s\n", dos_name);
+  }
+#endif
 
   if (result != 0) {
     fprintf(stderr, "Eject failed (%ld)\n", result);
