@@ -6,6 +6,7 @@
 #include <dos/dosextens.h>
 #include <dos/filehandler.h>
 #include <exec/io.h>
+#include <exec/memory.h>
 #include <libraries/expansion.h>
 #include <proto/dos.h>
 #include <proto/exec.h>
@@ -15,6 +16,11 @@
 #include <string.h>
 
 #include <fujinet-amiga-disk/support.h>
+
+#ifndef ID_BUSY
+/* InfoData disk type of an inhibited volume; absent from this NDK's dos.h. */
+#define ID_BUSY (0x42555359L) /* 'BUSY' */
+#endif
 
 #ifndef __KICK13__
 typedef struct node_snapshot {
@@ -74,12 +80,59 @@ static void snapshot_node(int unit, node_snapshot_t *out) {
     UnLockDosList(LDF_READ | LDF_DEVICES);
 }
 
+/* ACTION_DISK_INFO needs a longword-aligned InfoData; a 68k stack one isn't. */
+static BOOL handler_disk_info(struct MsgPort *task, struct InfoData *out) {
+    struct InfoData *info;
+    LONG ok;
+    info = (struct InfoData *)AllocVec(sizeof(*info), MEMF_PUBLIC | MEMF_CLEAR);
+    if (!info)
+        return FALSE;
+    ok = DoPkt(task, ACTION_DISK_INFO, MKBADDR(info), 0, 0, 0, 0);
+    *out = *info;
+    FreeVec(info);
+    return ok ? TRUE : FALSE;
+}
+
+static BOOL unit_media_absent(struct IOExtTD *request) {
+    request->iotd_Req.io_Command = TD_CHANGESTATE;
+    request->iotd_Req.io_Length = 0;
+    return DoIO((struct IORequest *)request) == 0 && request->iotd_Req.io_Actual != 0;
+}
+
+/*
+ * FUMOUNT parks a handler it cannot retire (no ACTION_DIE): inhibited, node
+ * kept, media ejected. Such a handler is reused rather than replaced.
+ */
+static BOOL node_parked(const node_snapshot_t *node, struct IOExtTD *request) {
+    struct InfoData info;
+    return node->active && unit_media_absent(request) &&
+           handler_disk_info(node->task, &info) && info.id_DiskType == ID_BUSY;
+}
+
+/*
+ * A handler that can't exit also can't change geometry or filesystem: FFS
+ * 40.1 reads the DosEnvec only at startup, and a stale one hangs the volume.
+ * Refuse, as a real drive of fixed type would, rather than orphan it.
+ */
+static void refuse_media_change(int unit, const node_snapshot_t *node) {
+    const char *kind = node->bpt > 11 ? "HD" : "DD";
+    const char *fs = (node->dostype & 1) ? "FFS" : "OFS";
+    fprintf(stderr, "DN%d: is fixed to %s %s media on this system; use another DN unit\n",
+            unit, kind, fs);
+    printf("DN%d: is fixed to %s %s media on this system; use another DN unit\n",
+           unit, kind, fs);
+}
+
+#define RETIRE_NOT_SUPPORTED 1
+
 static int retire_handler(int unit, const node_snapshot_t *snapshot) {
     int tries;
     node_snapshot_t current;
     if (!snapshot->active)
         return 0;
-    (void)DoPkt(snapshot->task, ACTION_DIE, 0, 0, 0, 0, 0);
+    if (!DoPkt(snapshot->task, ACTION_DIE, 0, 0, 0, 0, 0) &&
+        IoErr() == ERROR_ACTION_NOT_KNOWN)
+        return RETIRE_NOT_SUPPORTED;
     for (tries = 0; tries < 20; ++tries) {
         snapshot_node(unit, &current);
         if (current.present && !current.active)
@@ -444,7 +497,7 @@ int main(int argc, char **argv) {
     fujinet_disk_media_profile_t profile;
     node_snapshot_t node;
     uint32_t dostype;
-    BOOL compatible, inhibited = FALSE;
+    BOOL compatible, inhibited = FALSE, parked = FALSE;
     LONG result, uninhibit;
     if (argc < 2 || argc > 4 || argv[1][0] == '?') {
         usage();
@@ -504,14 +557,29 @@ int main(int argc, char **argv) {
                       node.low == profile.low_cylinder && node.high == profile.high_cylinder &&
                       node.dostype == dostype);
         sprintf(dos_name, "DN%d:", unit);
-        if (compatible && node.active) {
+        if (node_parked(&node, request)) {
+            if (!compatible) {
+                refuse_media_change(unit, &node);
+                goto fail;
+            }
+            /* Already inhibited by FUMOUNT: only the un-inhibit is ours. */
+            parked = TRUE;
+            inhibited = TRUE;
+        } else if (compatible && node.active) {
             if (!Inhibit((CONST_STRPTR)dos_name, DOSTRUE)) {
                 fprintf(stderr, "Cannot inhibit %s\n", dos_name);
                 goto fail;
             }
             inhibited = TRUE;
-        } else if (!compatible && retire_handler(unit, &node) != 0)
-            goto fail;
+        } else if (!compatible) {
+            int retired = retire_handler(unit, &node);
+            if (retired == RETIRE_NOT_SUPPORTED) {
+                refuse_media_change(unit, &node);
+                goto fail;
+            }
+            if (retired != 0)
+                goto fail;
+        }
         catalog.catalog_slot = slot;
         catalog.writable = readonly ? 0 : 1;
         request->iotd_Req.io_Command = FUJINET_DISK_CMD_MOUNT_CATALOG;
@@ -535,7 +603,9 @@ int main(int argc, char **argv) {
         }
         if (result == 0 && !compatible && update_inactive_envec(unit, &profile, dostype) != 0)
             result = 30;
-        if (inhibited) {
+        /* A parked handler has no media to return to, so it stays parked if
+         * the new image fails; otherwise restore normal access. */
+        if (inhibited && (result == 0 || !parked)) {
             uninhibit = Inhibit((CONST_STRPTR)dos_name, DOSFALSE);
             if (result == 0 && !uninhibit)
                 result = 31;

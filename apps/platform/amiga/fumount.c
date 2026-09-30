@@ -4,6 +4,7 @@
 #include <dos/dos.h>
 #include <dos/dosextens.h>
 #include <exec/io.h>
+#include <exec/memory.h>
 #include <exec/ports.h>
 #include <clib/alib_protos.h>
 #include <proto/dos.h>
@@ -11,6 +12,11 @@
 
 #include <stdio.h>
 #include <string.h>
+
+#ifndef ID_BUSY
+/* InfoData disk type of an inhibited volume; absent from this NDK's dos.h. */
+#define ID_BUSY (0x42555359L) /* 'BUSY' */
+#endif
 
 #define WB13_WRITEBACK_SETTLE_TICKS 250
 
@@ -131,6 +137,24 @@ static int get_handler_state(int unit)
               : HANDLER_INACTIVE;
   UnLockDosList(LDF_READ | LDF_DEVICES);
   return state;
+}
+
+/*
+ * ACTION_DISK_INFO into *out. The packet takes a BPTR, so the InfoData must be
+ * longword aligned, which a 68k stack variable is not guaranteed to be.
+ */
+static BOOL disk_info(struct MsgPort *handler_port, struct InfoData *out)
+{
+  struct InfoData *info;
+  LONG ok;
+
+  info = (struct InfoData *)AllocVec(sizeof(*info), MEMF_PUBLIC | MEMF_CLEAR);
+  if (!info)
+    return FALSE;
+  ok = DoPkt(handler_port, ACTION_DISK_INFO, MKBADDR(info), 0, 0, 0, 0);
+  *out = *info;
+  FreeVec(info);
+  return ok ? TRUE : FALSE;
 }
 
 /*
@@ -267,6 +291,22 @@ int main(int argc, char **argv)
       goto cleanup;
     }
 
+    {
+      /*
+       * A handler parked by an earlier FUMOUNT has no media, so the unit is
+       * already unmounted (where handlers can exit, its node would be gone).
+       * Leave it alone: inhibiting it again would nest, and FMOUNT's single
+       * un-inhibit would then leave it unusable.
+       */
+      struct InfoData info;
+      if (disk_info(handler_port, &info) && info.id_DiskType == ID_BUSY) {
+        fprintf(stderr, "%s is not mounted\n", dos_name);
+        printf("%s is not mounted\n", dos_name);
+        rc = 10;
+        goto cleanup;
+      }
+    }
+
     flush_result = DoPkt(handler_port, ACTION_FLUSH, 0, 0, 0, 0, 0);
     if (!flush_result) {
       err = IoErr();
@@ -295,9 +335,7 @@ int main(int argc, char **argv)
 
         printf("DN%d: handler has no ACTION_DIE (IoErr=%ld); checking activity\n",
                unit, (long)err);
-        memset(&info, 0, sizeof(info));
-        busy = !DoPkt(handler_port, ACTION_DISK_INFO, MKBADDR(&info), 0, 0, 0, 0) ||
-               info.id_InUse != 0;
+        busy = !disk_info(handler_port, &info) || info.id_InUse != 0;
         if (busy) {
           fprintf(stderr, "Cannot retire DN%d: handler (busy)\n", unit);
           printf("Cannot retire DN%d: handler (busy)\n", unit);
@@ -350,8 +388,8 @@ int main(int argc, char **argv)
      * Eject failed: the media is still there, so restore normal access.
      * On success, leave the handler inhibited — un-inhibiting it here
      * makes the filesystem revalidate the now-missing disk and raise a
-     * "Please replace volume" requester instead of just going away with
-     * the DosList entry below.
+     * "Please replace volume" requester. FMOUNT un-inhibits it once new
+     * media is present.
      */
     fprintf(stderr, "Cannot uninhibit %s\n", dos_name);
   }
@@ -360,6 +398,17 @@ int main(int argc, char **argv)
   if (result != 0) {
     fprintf(stderr, "Eject failed (%ld)\n", result);
     rc = 10;
+#ifndef __KICK13__
+  } else if (inhibited) {
+    /*
+     * A handler without ACTION_DIE can never exit, so removing its DOS node
+     * would orphan it (task, stack, buffers and a device handle) on every
+     * FUMOUNT. Park it instead: the node stays, inhibited with no media, and
+     * the next FMOUNT of this unit inserts the new image and un-inhibits it —
+     * the ordinary Amiga media-change sequence.
+     */
+    printf("DN%d: handler parked for reuse\n", unit);
+#endif
   } else {
 #ifndef __KICK13__
     /* Remove the DosList entry so the device can be unloaded.
