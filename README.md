@@ -20,7 +20,8 @@ Supported standalone targets are `msdos`, `atari`, `linux`, and `amiga`.
 make TARGET=msdos FUJINET_NIO_LIB=../fujinet-nio-lib
 make TARGET=atari FUJINET_NIO_LIB=../fujinet-nio-lib
 make TARGET=linux FUJINET_NIO_LIB=../fujinet-nio-lib
-make TARGET=amiga FUJINET_NIO_LIB=../fujinet-nio-lib
+make amiga                         # builds wb13, wb31, and wb32
+make amiga AMIGA_PROFILE=wb13      # one explicit profile
 ```
 
 Boot disks are repo-owned:

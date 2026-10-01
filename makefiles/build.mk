@@ -16,6 +16,15 @@ PLATFORM_INCLUDE_DIR := include/platform/$(PLATFORM)
 NIO_INCLUDE_DIR := $(FUJINET_NIO_LIB)/include
 BUILD_DIR ?= build
 TARGET_BUILD_DIR ?= $(BUILD_DIR)/$(TARGET)
+
+# The repository Makefile is the public Amiga entry point.  It supplies a
+# named Workbench output directory; refusing this legacy default prevents an
+# incompatible binary from silently reappearing in build/amiga/bin.
+ifeq ($(TARGET),amiga)
+ifeq ($(TARGET_BUILD_DIR),$(BUILD_DIR)/amiga)
+$(error Amiga builds require TARGET_BUILD_DIR=build/amiga/wb13, wb31, or wb32; use `make amiga`)
+endif
+endif
 OBJ_DIR := $(TARGET_BUILD_DIR)/obj
 BIN_DIR := $(TARGET_BUILD_DIR)/bin
 DISK_DIR := $(TARGET_BUILD_DIR)/disk
@@ -30,6 +39,10 @@ PROGRAMS_EXCLUDE_msdos :=
 PROGRAMS_EXCLUDE_atari := fboot
 PROGRAMS_EXCLUDE_linux :=
 PROGRAMS_EXCLUDE := $(PROGRAMS_EXCLUDE_$(TARGET))
+ifeq ($(AMIGA_WB13),1)
+# SystemTags()/SYS_Asynch used by fmountrestore is a Kickstart 2.0 API.
+PROGRAMS_EXCLUDE += fmountrestore
+endif
 PROGRAMS := $(filter-out $(PROGRAMS_EXCLUDE),$(PROGRAMS_ALL))
 
 COMMON_SRCS := $(SRC_DIR)/common/fnsvc.c $(SRC_DIR)/platform/$(PLATFORM)/fnctl.c
