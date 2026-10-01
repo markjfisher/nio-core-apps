@@ -1,5 +1,6 @@
 CC := m68k-amigaos-gcc
 AMIGA_CRT ?= clib2
+AMIGA_WB13 ?= 0
 FUJINET_NIO_DRIVER_BUILD ?= ../fujinet-nio-driver/build/amiga
 
 CFLAGS += -Wall -Wextra -O2 -std=c99
@@ -14,6 +15,9 @@ CFLAGS += -I$(NIO_INCLUDE_DIR)
 CFLAGS += -I$(FUJINET_NIO_DRIVER_BUILD)/include
 CFLAGS += -DFNSVC_LIST_MAX_PAYLOAD=$(FNSVC_LIST_MAX_PAYLOAD)
 CFLAGS += -D__AMIGA__
+ifeq ($(AMIGA_WB13),1)
+CFLAGS += -D__KICK13__
+endif
 
 # Keep Amiga applications self-contained instead of requiring the optional
 # mathieeedoubbas.library at process startup.
