@@ -20,6 +20,7 @@ msdos atari linux:
 amiga:
 ifeq ($(AMIGA_PROFILE),)
 	@for profile in $(AMIGA_PROFILES); do \
+		$(MAKE) -C ../fujinet-nio-driver amiga AMIGA_PROFILE=$$profile || exit $$?; \
 		$(MAKE) -f makefiles/build.mk TARGET=amiga \
 			TARGET_BUILD_DIR=build/amiga/$$profile \
 			AMIGA_CRT=$$(if [ "$$profile" = wb13 ]; then echo nix13; else echo clib2; fi) \
@@ -27,6 +28,7 @@ ifeq ($(AMIGA_PROFILE),)
 			FUJINET_NIO_DRIVER_BUILD=../fujinet-nio-driver/build/amiga/$$profile || exit $$?; \
 	done
 else
+	$(MAKE) -C ../fujinet-nio-driver amiga AMIGA_PROFILE=$(AMIGA_PROFILE)
 	$(MAKE) -f makefiles/build.mk TARGET=amiga \
 		TARGET_BUILD_DIR=build/amiga/$(AMIGA_PROFILE) \
 		AMIGA_CRT=$(AMIGA_CRT_$(AMIGA_PROFILE)) \
