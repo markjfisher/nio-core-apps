@@ -13,9 +13,15 @@
 /* fn_disk_*() correctly retains its bounded 512-byte codec buffers in static
  * storage on cc65.  Keep the observable block above that enlarged BSS range. */
 #define FNACCEPT_RESULT_ADDR 0x0B00u
-#define FNACCEPT_SDMCTL_ADDR 0x022Fu
-#define FNACCEPT_DMACTL_ADDR 0xD400u
 #define FNACCEPT_RESULT_VERSION 5u
+#define FNACCEPT_MEMLO_ADDR 0x02E7u
+#define FNACCEPT_MEMTOP_ADDR 0x02E5u
+#define FNACCEPT_RAMTOP_ADDR 0x006Au
+#define FNACCEPT_SAVMSC_ADDR 0x0058u
+#define FNACCEPT_SDMCTL_ADDR 0x022Fu
+#define FNACCEPT_SDLSTL_ADDR 0x0230u
+#define FNACCEPT_DMACTL_ADDR 0xD400u
+#define FNACCEPT_MEMORY_SNAPSHOT_OFFSET 0x60u
 
 #define FNACCEPT_FILE_URI "persist:///fnaccept-v1.bin"
 #define FNACCEPT_FILE_URI_LEN (sizeof(FNACCEPT_FILE_URI) - 1u)
@@ -96,8 +102,6 @@ enum {
 };
 
 static volatile uint8_t *const result = (volatile uint8_t *)FNACCEPT_RESULT_ADDR;
-static volatile uint8_t *const sdmctl = (volatile uint8_t *)FNACCEPT_SDMCTL_ADDR;
-static volatile uint8_t *const dmactl = (volatile uint8_t *)FNACCEPT_DMACTL_ADDR;
 static uint8_t file_request[FNACCEPT_FILE_REQUEST_CAPACITY];
 static uint8_t file_reply[FNACCEPT_FILE_REPLY_CAPACITY];
 static uint8_t network_reply[FNACCEPT_NETWORK_REPLY_CAPACITY];
@@ -106,6 +110,42 @@ static uint8_t network_reply[FNACCEPT_NETWORK_REPLY_CAPACITY];
  * windows preserve enough conventional memory for the public transport. */
 static uint8_t *const disk_write = (uint8_t *)FNACCEPT_DISK_WRITE_ADDR;
 static uint8_t *const disk_read = (uint8_t *)FNACCEPT_DISK_READ_ADDR;
+
+static uint16_t read_os_word(uint16_t address)
+{
+    volatile uint8_t *value = (volatile uint8_t *)address;
+    return (uint16_t)value[0] | ((uint16_t)value[1] << 8);
+}
+
+/* The final layout stays below the live Graphics 0 and cc65-stack boundary;
+ * this is an observation only, before any application service call. */
+static void capture_memory_snapshot(void)
+{
+    uint8_t offset = FNACCEPT_MEMORY_SNAPSHOT_OFFSET;
+    uint16_t value;
+
+    result[offset++] = 'H';
+    result[offset++] = 'M';
+    result[offset++] = 'S';
+    result[offset++] = '1';
+    result[offset++] = 1u;
+    value = read_os_word(FNACCEPT_MEMLO_ADDR);
+    result[offset++] = (uint8_t)value;
+    result[offset++] = (uint8_t)(value >> 8);
+    value = read_os_word(FNACCEPT_MEMTOP_ADDR);
+    result[offset++] = (uint8_t)value;
+    result[offset++] = (uint8_t)(value >> 8);
+    result[offset++] = *(volatile uint8_t *)FNACCEPT_RAMTOP_ADDR;
+    value = read_os_word(FNACCEPT_SDLSTL_ADDR);
+    result[offset++] = (uint8_t)value;
+    result[offset++] = (uint8_t)(value >> 8);
+    value = read_os_word(FNACCEPT_SAVMSC_ADDR);
+    result[offset++] = (uint8_t)value;
+    result[offset++] = (uint8_t)(value >> 8);
+    result[offset++] = *(volatile uint8_t *)FNACCEPT_SDMCTL_ADDR;
+    result[offset++] = *(volatile uint8_t *)FNACCEPT_DMACTL_ADDR;
+    result[offset] = 0u; /* no headless transition occurred */
+}
 
 static void set_signature(uint8_t a, uint8_t b, uint8_t c, uint8_t d)
 {
@@ -255,11 +295,7 @@ int main(void)
     uint8_t file_recovery;
     uint16_t transferred;
 
-    /* This is a headless acceptance XEX.  Its complete public-library image
-     * legitimately occupies RAM that the default OS display list otherwise
-     * scans, so disable display DMA before any packet buffers are touched. */
-    *sdmctl = 0;
-    *dmactl = 0;
+    capture_memory_snapshot();
     set_signature('A', 'C', '?', '?');
     result[FNACCEPT_VERSION] = FNACCEPT_RESULT_VERSION;
     result[FNACCEPT_STAGE] = 1;

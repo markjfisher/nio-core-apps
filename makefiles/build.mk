@@ -89,7 +89,10 @@ $(OBJ_DIR)/%.o: %.c | $(OBJ_DIR)
 	$(call compile_c)
 
 define APP_PROGRAM_RULE
-$(BIN_DIR)/$(1)$(PROGRAM_EXT): $(OBJ_DIR)/$$(patsubst %.c,%.o,$$(filter %/$(1).c,$$(APP_SRCS))) $$(COMMON_OBJS) $$(NIO_LIB_FILE) | $(BIN_DIR)
+# fnaccept exercises only the published fujinet-nio-lib API.  Do not link the
+# interactive app-control/directory-service helpers into its constrained Atari
+# acceptance image; all other application links retain their common objects.
+$(BIN_DIR)/$(1)$(PROGRAM_EXT): $(OBJ_DIR)/$$(patsubst %.c,%.o,$$(filter %/$(1).c,$$(APP_SRCS))) $$(if $$(filter fnaccept,$(1)),,$$(COMMON_OBJS)) $$(NIO_LIB_FILE) | $(BIN_DIR)
 	$$(call link_program)
 endef
 
@@ -99,7 +102,7 @@ $(foreach prog,$(PROGRAMS),$(eval $(call APP_PROGRAM_RULE,$(prog))))
 # addition to Clock/File/Network.  Keep its larger code image below the Atari
 # shared transport state without moving ordinary utilities or their links.
 ifeq ($(TARGET),atari)
-$(BIN_DIR)/fnaccept$(PROGRAM_EXT): ATARI_START_ADDRESS = 0x1D00
+$(BIN_DIR)/fnaccept$(PROGRAM_EXT): ATARI_START_ADDRESS = 0x0D00
 endif
 
 $(OBJ_DIR):
