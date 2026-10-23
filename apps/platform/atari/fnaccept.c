@@ -13,7 +13,7 @@
 /* fn_disk_*() correctly retains its bounded 512-byte codec buffers in static
  * storage on cc65.  Keep the observable block above that enlarged BSS range. */
 #define FNACCEPT_RESULT_ADDR 0x0B00u
-#define FNACCEPT_RESULT_VERSION 5u
+#define FNACCEPT_RESULT_VERSION 6u
 #define FNACCEPT_MEMLO_ADDR 0x02E7u
 #define FNACCEPT_MEMTOP_ADDR 0x02E5u
 #define FNACCEPT_RAMTOP_ADDR 0x006Au
@@ -98,7 +98,12 @@ enum {
     FNACCEPT_FILE_RECOVERY_WRITE_DEVICE_STATUS = 77,
     FNACCEPT_FILE_RECOVERY_WRITE_RESPONSE_LENGTH = 78,
     FNACCEPT_FILE_RECOVERY_WRITE_COUNT = 80,
-    FNACCEPT_FILE_RECOVERY_VERIFY = 82
+    FNACCEPT_FILE_RECOVERY_VERIFY = 82,
+    /* These make a transport failure observable independently of the normal
+     * File reply fields.  In the malformed-P-length scenario the first Write
+     * has already reached FileDevice, but its terminal R is rejected. */
+    FNACCEPT_FILE_FAILURE_STATUS = 83,
+    FNACCEPT_FILE_RECOVERY_KIND = 84
 };
 
 static volatile uint8_t *const result = (volatile uint8_t *)FNACCEPT_RESULT_ADDR;
@@ -309,7 +314,7 @@ int main(void)
     result[FNACCEPT_FILE_READ_DEVICE_STATUS] = 0xff;
     result[FNACCEPT_FILE_VERIFY] = 0;
     for (index = FNACCEPT_FILE_WRITE_RESPONSE_LENGTH;
-         index <= FNACCEPT_FILE_RECOVERY_VERIFY; ++index) {
+         index <= FNACCEPT_FILE_RECOVERY_KIND; ++index) {
         result[index] = 0;
     }
     result[FNACCEPT_NETWORK_OPEN_STATUS] = 0xff;
@@ -356,11 +361,15 @@ int main(void)
     result[FNACCEPT_FILE_WRITE_COUNT] = get_u16le(file_reply, 8);
     result[FNACCEPT_FILE_WRITE_COUNT + 1u] = file_reply[9];
     if (status != FN_OK) {
-        /* A rejected W creates no outstanding library transaction.  Do not
-         * replay this side-effecting request: issue one distinct File write
-         * and let the public transport begin directly with its new W. */
+        /* Do not replay this side-effecting request.  Whether W itself was
+         * rejected (no outstanding transaction) or terminal R was rejected
+         * after a delivered READY reply (an outstanding response remains),
+         * issue one distinct File write.  The public transport owns the
+         * required P/R drain before that new W in the latter case. */
         result[FNACCEPT_FILE_REJECTED_W_STATUS] = status;
+        result[FNACCEPT_FILE_FAILURE_STATUS] = status;
         result[FNACCEPT_FILE_RECOVERY_ATTEMPTED] = 1;
+        result[FNACCEPT_FILE_RECOVERY_KIND] = 1;
         file_recovery = 1;
         result[FNACCEPT_STAGE] = 4;
         request_length = build_file_request(FNACCEPT_FILE_CMD_WRITE, file_recovery);
