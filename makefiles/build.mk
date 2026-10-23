@@ -95,6 +95,13 @@ endef
 
 $(foreach prog,$(PROGRAMS),$(eval $(call APP_PROGRAM_RULE,$(prog))))
 
+# The public-API acceptance XEX pulls the bounded DiskDevice client in
+# addition to Clock/File/Network.  Keep its larger code image below the Atari
+# shared transport state without moving ordinary utilities or their links.
+ifeq ($(TARGET),atari)
+$(BIN_DIR)/fnaccept$(PROGRAM_EXT): ATARI_START_ADDRESS = 0x2000
+endif
+
 $(OBJ_DIR):
 	mkdir -p $@
 

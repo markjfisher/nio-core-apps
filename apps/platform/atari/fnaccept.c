@@ -10,8 +10,10 @@
 #include "fn_protocol.h"
 #include "fn_raw.h"
 
-#define FNACCEPT_RESULT_ADDR 0x0A00u
-#define FNACCEPT_RESULT_VERSION 3u
+/* fn_disk_*() correctly retains its bounded 512-byte codec buffers in static
+ * storage on cc65.  Keep the observable block above that enlarged BSS range. */
+#define FNACCEPT_RESULT_ADDR 0x0B00u
+#define FNACCEPT_RESULT_VERSION 4u
 
 #define FNACCEPT_FILE_URI "persist:///fnaccept-v1.bin"
 #define FNACCEPT_FILE_URI_LEN (sizeof(FNACCEPT_FILE_URI) - 1u)
@@ -29,6 +31,13 @@
 #define FNACCEPT_NETWORK_REPLY_TEXT "NET-REPLY-24"
 #define FNACCEPT_NETWORK_REPLY_LEN (sizeof(FNACCEPT_NETWORK_REPLY_TEXT) - 1u)
 #define FNACCEPT_NETWORK_REPLY_CAPACITY 32u
+
+#define FNACCEPT_DISK_SLOT 2u
+#define FNACCEPT_DISK_LBA 5UL
+#define FNACCEPT_DISK_SECTOR_BYTES 128u
+#define FNACCEPT_DISK_EXPECTED_SECTOR_COUNT 16UL
+#define FNACCEPT_DISK_WRITE_ADDR 0x0B80u
+#define FNACCEPT_DISK_READ_ADDR 0x0C00u
 
 enum {
     FNACCEPT_SIGNATURE = 0,
@@ -57,13 +66,31 @@ enum {
     FNACCEPT_NETWORK_READ_FLAGS = 40,
     FNACCEPT_NETWORK_VERIFY = 41,
     FNACCEPT_NETWORK_CLOSE_STATUS = 42,
-    FNACCEPT_NETWORK_REPLY = 43
+    FNACCEPT_NETWORK_REPLY = 43,
+    FNACCEPT_DISK_INFO_STATUS = 55,
+    FNACCEPT_DISK_FLAGS = 56,
+    FNACCEPT_DISK_SLOT_VALUE = 57,
+    FNACCEPT_DISK_TYPE = 58,
+    FNACCEPT_DISK_SECTOR_SIZE = 59,
+    FNACCEPT_DISK_SECTOR_COUNT = 61,
+    FNACCEPT_DISK_LAST_ERROR = 65,
+    FNACCEPT_DISK_WRITE_STATUS = 66,
+    FNACCEPT_DISK_FLUSH_STATUS = 67,
+    FNACCEPT_DISK_READ_STATUS = 68,
+    FNACCEPT_DISK_WRITE_LENGTH = 69,
+    FNACCEPT_DISK_READ_LENGTH = 71,
+    FNACCEPT_DISK_VERIFY = 73
 };
 
 static volatile uint8_t *const result = (volatile uint8_t *)FNACCEPT_RESULT_ADDR;
 static uint8_t file_request[FNACCEPT_FILE_REQUEST_CAPACITY];
 static uint8_t file_reply[FNACCEPT_FILE_REPLY_CAPACITY];
 static uint8_t network_reply[FNACCEPT_NETWORK_REPLY_CAPACITY];
+/* Keep the two public Disk-sector buffers out of the cc65 BSS.  fn_disk_*()
+ * brings in the library's full packet buffers, so these fixed static Atari RAM
+ * windows preserve enough conventional memory for the public transport. */
+static uint8_t *const disk_write = (uint8_t *)FNACCEPT_DISK_WRITE_ADDR;
+static uint8_t *const disk_read = (uint8_t *)FNACCEPT_DISK_READ_ADDR;
 
 static void set_signature(uint8_t a, uint8_t b, uint8_t c, uint8_t d)
 {
@@ -158,10 +185,45 @@ static uint8_t valid_network_reply(uint16_t count, uint8_t flags)
     return 1;
 }
 
+static uint8_t disk_pattern(uint8_t index)
+{
+    return (uint8_t)((uint8_t)(index * 37u) ^ 0xa5u);
+}
+
+static void put_result_u16(uint8_t offset, uint16_t value)
+{
+    result[offset] = (uint8_t)value;
+    result[offset + 1u] = (uint8_t)(value >> 8);
+}
+
+static void put_result_u32(uint8_t offset, uint32_t value)
+{
+    result[offset] = (uint8_t)value;
+    result[offset + 1u] = (uint8_t)(value >> 8);
+    result[offset + 2u] = (uint8_t)(value >> 16);
+    result[offset + 3u] = (uint8_t)(value >> 24);
+}
+
+static uint8_t valid_disk_read(uint16_t count)
+{
+    uint8_t index;
+
+    if (count != FNACCEPT_DISK_SECTOR_BYTES) {
+        return 0;
+    }
+    for (index = 0; index < FNACCEPT_DISK_SECTOR_BYTES; ++index) {
+        if (disk_read[index] != disk_pattern(index)) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
 int main(void)
 {
     FN_TIME_T clock_value;
     fn_raw_response_t file_response;
+    fn_disk_info_t disk_info;
     fn_handle_t network_handle;
     uint8_t status;
     uint8_t index;
@@ -181,19 +243,18 @@ int main(void)
     result[FNACCEPT_FILE_READ_STATUS] = 0xff;
     result[FNACCEPT_FILE_READ_DEVICE_STATUS] = 0xff;
     result[FNACCEPT_FILE_VERIFY] = 0;
-    result[FNACCEPT_NETWORK_OPEN_STATUS] = 0xff;
-    result[FNACCEPT_NETWORK_WRITE_STATUS] = 0xff;
-    result[FNACCEPT_NETWORK_READ_STATUS] = 0xff;
-    result[FNACCEPT_NETWORK_CLOSE_STATUS] = 0xff;
-    result[FNACCEPT_NETWORK_VERIFY] = 0;
     for (index = FNACCEPT_FILE_WRITE_RESPONSE_LENGTH;
-         index < (uint8_t)(FNACCEPT_NETWORK_REPLY + FNACCEPT_NETWORK_REPLY_LEN); ++index) {
+         index <= FNACCEPT_DISK_VERIFY; ++index) {
         result[index] = 0;
     }
     result[FNACCEPT_NETWORK_OPEN_STATUS] = 0xff;
     result[FNACCEPT_NETWORK_WRITE_STATUS] = 0xff;
     result[FNACCEPT_NETWORK_READ_STATUS] = 0xff;
     result[FNACCEPT_NETWORK_CLOSE_STATUS] = 0xff;
+    result[FNACCEPT_DISK_INFO_STATUS] = 0xff;
+    result[FNACCEPT_DISK_WRITE_STATUS] = 0xff;
+    result[FNACCEPT_DISK_FLUSH_STATUS] = 0xff;
+    result[FNACCEPT_DISK_READ_STATUS] = 0xff;
     for (index = 0; index != 8; ++index) {
         result[FNACCEPT_CLOCK_VALUE + index] = 0;
     }
@@ -300,7 +361,58 @@ int main(void)
     }
 
     result[FNACCEPT_STAGE] = 9;
-    set_signature('A', 'N', 'P', '!');
+    status = fn_disk_info(FNACCEPT_DISK_SLOT, &disk_info);
+    result[FNACCEPT_DISK_INFO_STATUS] = status;
+    result[FNACCEPT_DISK_FLAGS] = disk_info.flags;
+    result[FNACCEPT_DISK_SLOT_VALUE] = disk_info.slot;
+    result[FNACCEPT_DISK_TYPE] = disk_info.type;
+    put_result_u16(FNACCEPT_DISK_SECTOR_SIZE, disk_info.sector_size);
+    put_result_u32(FNACCEPT_DISK_SECTOR_COUNT, disk_info.sector_count);
+    result[FNACCEPT_DISK_LAST_ERROR] = disk_info.last_error;
+    if (status != FN_OK || disk_info.slot != FNACCEPT_DISK_SLOT ||
+        (disk_info.flags & 0x13u) != 0x11u ||
+        disk_info.sector_size != FNACCEPT_DISK_SECTOR_BYTES ||
+        disk_info.sector_count != FNACCEPT_DISK_EXPECTED_SECTOR_COUNT) {
+        set_signature('A', 'C', 'F', '!');
+        return 1;
+    }
+
+    result[FNACCEPT_STAGE] = 10;
+    for (index = 0; index < FNACCEPT_DISK_SECTOR_BYTES; ++index) {
+        disk_write[index] = disk_pattern(index);
+    }
+    status = fn_disk_write_sector(FNACCEPT_DISK_SLOT, FNACCEPT_DISK_LBA,
+                                  disk_write, FNACCEPT_DISK_SECTOR_BYTES);
+    result[FNACCEPT_DISK_WRITE_STATUS] = status;
+    put_result_u16(FNACCEPT_DISK_WRITE_LENGTH,
+                   status == FN_OK ? FNACCEPT_DISK_SECTOR_BYTES : 0);
+    if (status != FN_OK) {
+        set_signature('A', 'C', 'F', '!');
+        return 1;
+    }
+
+    result[FNACCEPT_STAGE] = 11;
+    status = fn_disk_flush(FNACCEPT_DISK_SLOT);
+    result[FNACCEPT_DISK_FLUSH_STATUS] = status;
+    if (status != FN_OK) {
+        set_signature('A', 'C', 'F', '!');
+        return 1;
+    }
+
+    result[FNACCEPT_STAGE] = 12;
+    transferred = 0;
+    status = fn_disk_read_sector(FNACCEPT_DISK_SLOT, FNACCEPT_DISK_LBA,
+                                 disk_read, FNACCEPT_DISK_SECTOR_BYTES, &transferred);
+    result[FNACCEPT_DISK_READ_STATUS] = status;
+    put_result_u16(FNACCEPT_DISK_READ_LENGTH, transferred);
+    if (status != FN_OK || !valid_disk_read(transferred)) {
+        set_signature('A', 'C', 'F', '!');
+        return 1;
+    }
+
+    result[FNACCEPT_DISK_VERIFY] = 1;
+    result[FNACCEPT_STAGE] = 13;
+    set_signature('A', 'D', 'P', '!');
     for (;;) {
         if (++result[FNACCEPT_HEARTBEAT] == 0) {
             ++result[FNACCEPT_HEARTBEAT_HIGH];
