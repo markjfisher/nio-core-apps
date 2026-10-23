@@ -88,11 +88,16 @@ $(OBJ_DIR)/%.o: %.c | $(OBJ_DIR)
 	@mkdir -p $(dir $@)
 	$(call compile_c)
 
-define APP_PROGRAM_RULE
+FNACCEPT_COMMON_OBJS := $(COMMON_OBJS)
+ifeq ($(TARGET),atari)
 # fnaccept exercises only the published fujinet-nio-lib API.  Do not link the
 # interactive app-control/directory-service helpers into its constrained Atari
-# acceptance image; all other application links retain their common objects.
-$(BIN_DIR)/$(1)$(PROGRAM_EXT): $(OBJ_DIR)/$$(patsubst %.c,%.o,$$(filter %/$(1).c,$$(APP_SRCS))) $$(if $$(filter fnaccept,$(1)),,$$(COMMON_OBJS)) $$(NIO_LIB_FILE) | $(BIN_DIR)
+# acceptance image.  Other targets retain the normal common-object link.
+FNACCEPT_COMMON_OBJS :=
+endif
+
+define APP_PROGRAM_RULE
+$(BIN_DIR)/$(1)$(PROGRAM_EXT): $(OBJ_DIR)/$$(patsubst %.c,%.o,$$(filter %/$(1).c,$$(APP_SRCS))) $$(if $$(filter fnaccept,$(1)),$$(FNACCEPT_COMMON_OBJS),$$(COMMON_OBJS)) $$(NIO_LIB_FILE) | $(BIN_DIR)
 	$$(call link_program)
 endef
 
