@@ -14,3 +14,5 @@ apps:
     name: fdrive.xex
   - src: ${BOOT_DISK_BIN}/fapp.xex
     name: fapp.xex
+  - src: ${BOOT_DISK_BIN}/fnaccept.xex
+    name: fnaccept.xex
