@@ -13,13 +13,19 @@
 /* fn_disk_*() correctly retains its bounded 512-byte codec buffers in static
  * storage on cc65.  Keep the observable block above that enlarged BSS range. */
 #define FNACCEPT_RESULT_ADDR 0x0B00u
-#define FNACCEPT_RESULT_VERSION 4u
+#define FNACCEPT_SDMCTL_ADDR 0x022Fu
+#define FNACCEPT_DMACTL_ADDR 0xD400u
+#define FNACCEPT_RESULT_VERSION 5u
 
 #define FNACCEPT_FILE_URI "persist:///fnaccept-v1.bin"
 #define FNACCEPT_FILE_URI_LEN (sizeof(FNACCEPT_FILE_URI) - 1u)
 #define FNACCEPT_FILE_MARKER "ATARI-FILE-24"
 #define FNACCEPT_FILE_MARKER_LEN (sizeof(FNACCEPT_FILE_MARKER) - 1u)
-#define FNACCEPT_FILE_REQUEST_CAPACITY 64u
+#define FNACCEPT_FILE_RECOVERY_URI "persist:///fnaccept-recovered-v1.bin"
+#define FNACCEPT_FILE_RECOVERY_URI_LEN (sizeof(FNACCEPT_FILE_RECOVERY_URI) - 1u)
+#define FNACCEPT_FILE_RECOVERY_MARKER "ATARI-FILE-RECOVERY-24"
+#define FNACCEPT_FILE_RECOVERY_MARKER_LEN (sizeof(FNACCEPT_FILE_RECOVERY_MARKER) - 1u)
+#define FNACCEPT_FILE_REQUEST_CAPACITY 96u
 #define FNACCEPT_FILE_REPLY_CAPACITY 64u
 
 #define FNACCEPT_FILE_CMD_READ 0x03u
@@ -79,10 +85,19 @@ enum {
     FNACCEPT_DISK_READ_STATUS = 68,
     FNACCEPT_DISK_WRITE_LENGTH = 69,
     FNACCEPT_DISK_READ_LENGTH = 71,
-    FNACCEPT_DISK_VERIFY = 73
+    FNACCEPT_DISK_VERIFY = 73,
+    FNACCEPT_FILE_REJECTED_W_STATUS = 74,
+    FNACCEPT_FILE_RECOVERY_ATTEMPTED = 75,
+    FNACCEPT_FILE_RECOVERY_WRITE_STATUS = 76,
+    FNACCEPT_FILE_RECOVERY_WRITE_DEVICE_STATUS = 77,
+    FNACCEPT_FILE_RECOVERY_WRITE_RESPONSE_LENGTH = 78,
+    FNACCEPT_FILE_RECOVERY_WRITE_COUNT = 80,
+    FNACCEPT_FILE_RECOVERY_VERIFY = 82
 };
 
 static volatile uint8_t *const result = (volatile uint8_t *)FNACCEPT_RESULT_ADDR;
+static volatile uint8_t *const sdmctl = (volatile uint8_t *)FNACCEPT_SDMCTL_ADDR;
+static volatile uint8_t *const dmactl = (volatile uint8_t *)FNACCEPT_DMACTL_ADDR;
 static uint8_t file_request[FNACCEPT_FILE_REQUEST_CAPACITY];
 static uint8_t file_reply[FNACCEPT_FILE_REPLY_CAPACITY];
 static uint8_t network_reply[FNACCEPT_NETWORK_REPLY_CAPACITY];
@@ -113,57 +128,65 @@ static uint16_t get_u16le(const uint8_t *value, uint8_t offset)
 
 /* FileDevice v1 application payload only: this guest never builds a FujiBus
  * packet or a native-SIO frame. */
-static uint8_t build_file_request(uint8_t command)
+static uint8_t build_file_request(uint8_t command, uint8_t recovery)
 {
+    const char *uri = recovery ? FNACCEPT_FILE_RECOVERY_URI : FNACCEPT_FILE_URI;
+    const char *marker = recovery ? FNACCEPT_FILE_RECOVERY_MARKER : FNACCEPT_FILE_MARKER;
+    uint8_t uri_length = recovery ? FNACCEPT_FILE_RECOVERY_URI_LEN : FNACCEPT_FILE_URI_LEN;
+    uint8_t marker_length = recovery ? FNACCEPT_FILE_RECOVERY_MARKER_LEN : FNACCEPT_FILE_MARKER_LEN;
     uint8_t index;
     uint8_t at = 0;
 
     file_request[at++] = 1u;
-    put_u16le(at, FNACCEPT_FILE_URI_LEN);
+    put_u16le(at, uri_length);
     at += 2u;
-    for (index = 0; index < FNACCEPT_FILE_URI_LEN; ++index) {
-        file_request[at++] = FNACCEPT_FILE_URI[index];
+    for (index = 0; index < uri_length; ++index) {
+        file_request[at++] = uri[index];
     }
     /* Both operations start at offset zero. */
     file_request[at++] = 0;
     file_request[at++] = 0;
     file_request[at++] = 0;
     file_request[at++] = 0;
-    put_u16le(at, FNACCEPT_FILE_MARKER_LEN);
+    put_u16le(at, marker_length);
     at += 2u;
     if (command == FNACCEPT_FILE_CMD_WRITE) {
-        for (index = 0; index < FNACCEPT_FILE_MARKER_LEN; ++index) {
-            file_request[at++] = FNACCEPT_FILE_MARKER[index];
+        for (index = 0; index < marker_length; ++index) {
+            file_request[at++] = marker[index];
         }
     }
     return at;
 }
 
-static uint8_t valid_write_reply(const fn_raw_response_t *response)
+static uint8_t valid_write_reply(const fn_raw_response_t *response, uint8_t recovery)
 {
+    uint16_t marker_length = recovery ? FNACCEPT_FILE_RECOVERY_MARKER_LEN : FNACCEPT_FILE_MARKER_LEN;
+
     return response->status == 0 && response->payload_length == 10u &&
            file_reply[0] == 1u && file_reply[1] == 0 &&
            file_reply[2] == 0 && file_reply[3] == 0 &&
            file_reply[4] == 0 && file_reply[5] == 0 &&
            file_reply[6] == 0 && file_reply[7] == 0 &&
-           get_u16le(file_reply, 8) == FNACCEPT_FILE_MARKER_LEN;
+           get_u16le(file_reply, 8) == marker_length;
 }
 
-static uint8_t valid_read_reply(const fn_raw_response_t *response)
+static uint8_t valid_read_reply(const fn_raw_response_t *response, uint8_t recovery)
 {
+    const char *marker = recovery ? FNACCEPT_FILE_RECOVERY_MARKER : FNACCEPT_FILE_MARKER;
+    uint8_t marker_length = recovery ? FNACCEPT_FILE_RECOVERY_MARKER_LEN : FNACCEPT_FILE_MARKER_LEN;
     uint8_t index;
 
     if (response->status != 0 ||
-        response->payload_length != (uint16_t)(10u + FNACCEPT_FILE_MARKER_LEN) ||
+        response->payload_length != (uint16_t)(10u + marker_length) ||
         file_reply[0] != 1u || (file_reply[1] & (uint8_t)~0x03u) != 0 ||
         file_reply[2] != 0 || file_reply[3] != 0 ||
         file_reply[4] != 0 || file_reply[5] != 0 ||
         file_reply[6] != 0 || file_reply[7] != 0 ||
-        get_u16le(file_reply, 8) != FNACCEPT_FILE_MARKER_LEN) {
+        get_u16le(file_reply, 8) != marker_length) {
         return 0;
     }
-    for (index = 0; index < FNACCEPT_FILE_MARKER_LEN; ++index) {
-        if (file_reply[10u + index] != FNACCEPT_FILE_MARKER[index]) {
+    for (index = 0; index < marker_length; ++index) {
+        if (file_reply[10u + index] != marker[index]) {
             return 0;
         }
     }
@@ -229,8 +252,14 @@ int main(void)
     uint8_t index;
     uint8_t request_length;
     uint8_t read_flags;
+    uint8_t file_recovery;
     uint16_t transferred;
 
+    /* This is a headless acceptance XEX.  Its complete public-library image
+     * legitimately occupies RAM that the default OS display list otherwise
+     * scans, so disable display DMA before any packet buffers are touched. */
+    *sdmctl = 0;
+    *dmactl = 0;
     set_signature('A', 'C', '?', '?');
     result[FNACCEPT_VERSION] = FNACCEPT_RESULT_VERSION;
     result[FNACCEPT_STAGE] = 1;
@@ -244,7 +273,7 @@ int main(void)
     result[FNACCEPT_FILE_READ_DEVICE_STATUS] = 0xff;
     result[FNACCEPT_FILE_VERIFY] = 0;
     for (index = FNACCEPT_FILE_WRITE_RESPONSE_LENGTH;
-         index <= FNACCEPT_DISK_VERIFY; ++index) {
+         index <= FNACCEPT_FILE_RECOVERY_VERIFY; ++index) {
         result[index] = 0;
     }
     result[FNACCEPT_NETWORK_OPEN_STATUS] = 0xff;
@@ -255,6 +284,7 @@ int main(void)
     result[FNACCEPT_DISK_WRITE_STATUS] = 0xff;
     result[FNACCEPT_DISK_FLUSH_STATUS] = 0xff;
     result[FNACCEPT_DISK_READ_STATUS] = 0xff;
+    result[FNACCEPT_FILE_RECOVERY_WRITE_STATUS] = 0xff;
     for (index = 0; index != 8; ++index) {
         result[FNACCEPT_CLOCK_VALUE + index] = 0;
     }
@@ -278,7 +308,8 @@ int main(void)
     }
 
     result[FNACCEPT_STAGE] = 3;
-    request_length = build_file_request(FNACCEPT_FILE_CMD_WRITE);
+    file_recovery = 0;
+    request_length = build_file_request(FNACCEPT_FILE_CMD_WRITE, file_recovery);
     status = fn_raw_call(FN_DEVICE_FILE, FNACCEPT_FILE_CMD_WRITE,
                          file_request, request_length,
                          file_reply, sizeof(file_reply), &file_response);
@@ -288,13 +319,36 @@ int main(void)
     result[FNACCEPT_FILE_WRITE_RESPONSE_LENGTH + 1u] = (uint8_t)(file_response.payload_length >> 8);
     result[FNACCEPT_FILE_WRITE_COUNT] = get_u16le(file_reply, 8);
     result[FNACCEPT_FILE_WRITE_COUNT + 1u] = file_reply[9];
-    if (status != FN_OK || !valid_write_reply(&file_response)) {
+    if (status != FN_OK) {
+        /* A rejected W creates no outstanding library transaction.  Do not
+         * replay this side-effecting request: issue one distinct File write
+         * and let the public transport begin directly with its new W. */
+        result[FNACCEPT_FILE_REJECTED_W_STATUS] = status;
+        result[FNACCEPT_FILE_RECOVERY_ATTEMPTED] = 1;
+        file_recovery = 1;
+        result[FNACCEPT_STAGE] = 4;
+        request_length = build_file_request(FNACCEPT_FILE_CMD_WRITE, file_recovery);
+        status = fn_raw_call(FN_DEVICE_FILE, FNACCEPT_FILE_CMD_WRITE,
+                             file_request, request_length,
+                             file_reply, sizeof(file_reply), &file_response);
+        result[FNACCEPT_FILE_RECOVERY_WRITE_STATUS] = status;
+        result[FNACCEPT_FILE_RECOVERY_WRITE_DEVICE_STATUS] = file_response.status;
+        result[FNACCEPT_FILE_RECOVERY_WRITE_RESPONSE_LENGTH] = (uint8_t)file_response.payload_length;
+        result[FNACCEPT_FILE_RECOVERY_WRITE_RESPONSE_LENGTH + 1u] = (uint8_t)(file_response.payload_length >> 8);
+        result[FNACCEPT_FILE_RECOVERY_WRITE_COUNT] = (uint8_t)get_u16le(file_reply, 8);
+        result[FNACCEPT_FILE_RECOVERY_WRITE_COUNT + 1u] = file_reply[9];
+        if (status != FN_OK || !valid_write_reply(&file_response, file_recovery)) {
+            set_signature('A', 'C', 'F', '!');
+            return 1;
+        }
+        result[FNACCEPT_FILE_RECOVERY_VERIFY] = 1;
+    } else if (!valid_write_reply(&file_response, file_recovery)) {
         set_signature('A', 'C', 'F', '!');
         return 1;
     }
 
-    result[FNACCEPT_STAGE] = 4;
-    request_length = build_file_request(FNACCEPT_FILE_CMD_READ);
+    result[FNACCEPT_STAGE] = 5;
+    request_length = build_file_request(FNACCEPT_FILE_CMD_READ, file_recovery);
     status = fn_raw_call(FN_DEVICE_FILE, FNACCEPT_FILE_CMD_READ,
                          file_request, request_length,
                          file_reply, sizeof(file_reply), &file_response);
@@ -304,13 +358,13 @@ int main(void)
     result[FNACCEPT_FILE_READ_RESPONSE_LENGTH + 1u] = (uint8_t)(file_response.payload_length >> 8);
     result[FNACCEPT_FILE_READ_COUNT] = (uint8_t)get_u16le(file_reply, 8);
     result[FNACCEPT_FILE_READ_COUNT + 1u] = file_reply[9];
-    if (status != FN_OK || !valid_read_reply(&file_response)) {
+    if (status != FN_OK || !valid_read_reply(&file_response, file_recovery)) {
         set_signature('A', 'C', 'F', '!');
         return 1;
     }
 
     result[FNACCEPT_FILE_VERIFY] = 1;
-    result[FNACCEPT_STAGE] = 5;
+    result[FNACCEPT_STAGE] = 6;
     network_handle = FN_INVALID_HANDLE;
     status = fn_open(&network_handle, FN_METHOD_POST, FNACCEPT_NETWORK_URI, 0);
     result[FNACCEPT_NETWORK_OPEN_STATUS] = status;
@@ -321,7 +375,7 @@ int main(void)
         return 1;
     }
 
-    result[FNACCEPT_STAGE] = 6;
+    result[FNACCEPT_STAGE] = 7;
     transferred = 0;
     status = fn_write(network_handle, 0,
                       (const uint8_t *)FNACCEPT_NETWORK_WRITE_MARKER,
@@ -334,7 +388,7 @@ int main(void)
         return 1;
     }
 
-    result[FNACCEPT_STAGE] = 7;
+    result[FNACCEPT_STAGE] = 8;
     transferred = 0;
     read_flags = 0;
     status = fn_read(network_handle, 0, network_reply, sizeof(network_reply),
@@ -352,7 +406,7 @@ int main(void)
     }
 
     result[FNACCEPT_NETWORK_VERIFY] = 1;
-    result[FNACCEPT_STAGE] = 8;
+    result[FNACCEPT_STAGE] = 9;
     status = fn_close(network_handle);
     result[FNACCEPT_NETWORK_CLOSE_STATUS] = status;
     if (status != FN_OK) {
@@ -360,7 +414,7 @@ int main(void)
         return 1;
     }
 
-    result[FNACCEPT_STAGE] = 9;
+    result[FNACCEPT_STAGE] = 10;
     status = fn_disk_info(FNACCEPT_DISK_SLOT, &disk_info);
     result[FNACCEPT_DISK_INFO_STATUS] = status;
     result[FNACCEPT_DISK_FLAGS] = disk_info.flags;
@@ -377,7 +431,7 @@ int main(void)
         return 1;
     }
 
-    result[FNACCEPT_STAGE] = 10;
+    result[FNACCEPT_STAGE] = 11;
     for (index = 0; index < FNACCEPT_DISK_SECTOR_BYTES; ++index) {
         disk_write[index] = disk_pattern(index);
     }
@@ -391,7 +445,7 @@ int main(void)
         return 1;
     }
 
-    result[FNACCEPT_STAGE] = 11;
+    result[FNACCEPT_STAGE] = 12;
     status = fn_disk_flush(FNACCEPT_DISK_SLOT);
     result[FNACCEPT_DISK_FLUSH_STATUS] = status;
     if (status != FN_OK) {
@@ -399,7 +453,7 @@ int main(void)
         return 1;
     }
 
-    result[FNACCEPT_STAGE] = 12;
+    result[FNACCEPT_STAGE] = 13;
     transferred = 0;
     status = fn_disk_read_sector(FNACCEPT_DISK_SLOT, FNACCEPT_DISK_LBA,
                                  disk_read, FNACCEPT_DISK_SECTOR_BYTES, &transferred);
@@ -411,7 +465,7 @@ int main(void)
     }
 
     result[FNACCEPT_DISK_VERIFY] = 1;
-    result[FNACCEPT_STAGE] = 13;
+    result[FNACCEPT_STAGE] = 14;
     set_signature('A', 'D', 'P', '!');
     for (;;) {
         if (++result[FNACCEPT_HEARTBEAT] == 0) {

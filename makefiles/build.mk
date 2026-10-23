@@ -99,7 +99,7 @@ $(foreach prog,$(PROGRAMS),$(eval $(call APP_PROGRAM_RULE,$(prog))))
 # addition to Clock/File/Network.  Keep its larger code image below the Atari
 # shared transport state without moving ordinary utilities or their links.
 ifeq ($(TARGET),atari)
-$(BIN_DIR)/fnaccept$(PROGRAM_EXT): ATARI_START_ADDRESS = 0x2000
+$(BIN_DIR)/fnaccept$(PROGRAM_EXT): ATARI_START_ADDRESS = 0x1D00
 endif
 
 $(OBJ_DIR):
