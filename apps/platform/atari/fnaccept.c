@@ -11,7 +11,7 @@
 #include "fn_raw.h"
 
 #define FNACCEPT_RESULT_ADDR 0x0A00u
-#define FNACCEPT_RESULT_VERSION 2u
+#define FNACCEPT_RESULT_VERSION 3u
 
 #define FNACCEPT_FILE_URI "persist:///fnaccept-v1.bin"
 #define FNACCEPT_FILE_URI_LEN (sizeof(FNACCEPT_FILE_URI) - 1u)
@@ -22,6 +22,13 @@
 
 #define FNACCEPT_FILE_CMD_READ 0x03u
 #define FNACCEPT_FILE_CMD_WRITE 0x04u
+
+#define FNACCEPT_NETWORK_URI "fixture://nio-accept"
+#define FNACCEPT_NETWORK_WRITE_MARKER "NET-WRITE-24"
+#define FNACCEPT_NETWORK_WRITE_MARKER_LEN (sizeof(FNACCEPT_NETWORK_WRITE_MARKER) - 1u)
+#define FNACCEPT_NETWORK_REPLY_TEXT "NET-REPLY-24"
+#define FNACCEPT_NETWORK_REPLY_LEN (sizeof(FNACCEPT_NETWORK_REPLY_TEXT) - 1u)
+#define FNACCEPT_NETWORK_REPLY_CAPACITY 32u
 
 enum {
     FNACCEPT_SIGNATURE = 0,
@@ -40,12 +47,23 @@ enum {
     FNACCEPT_FILE_READ_DEVICE_STATUS = 25,
     FNACCEPT_FILE_READ_RESPONSE_LENGTH = 26,
     FNACCEPT_FILE_READ_COUNT = 28,
-    FNACCEPT_FILE_VERIFY = 30
+    FNACCEPT_FILE_VERIFY = 30,
+    FNACCEPT_NETWORK_OPEN_STATUS = 31,
+    FNACCEPT_NETWORK_HANDLE = 32,
+    FNACCEPT_NETWORK_WRITE_STATUS = 34,
+    FNACCEPT_NETWORK_WRITE_COUNT = 35,
+    FNACCEPT_NETWORK_READ_STATUS = 37,
+    FNACCEPT_NETWORK_READ_COUNT = 38,
+    FNACCEPT_NETWORK_READ_FLAGS = 40,
+    FNACCEPT_NETWORK_VERIFY = 41,
+    FNACCEPT_NETWORK_CLOSE_STATUS = 42,
+    FNACCEPT_NETWORK_REPLY = 43
 };
 
 static volatile uint8_t *const result = (volatile uint8_t *)FNACCEPT_RESULT_ADDR;
 static uint8_t file_request[FNACCEPT_FILE_REQUEST_CAPACITY];
 static uint8_t file_reply[FNACCEPT_FILE_REPLY_CAPACITY];
+static uint8_t network_reply[FNACCEPT_NETWORK_REPLY_CAPACITY];
 
 static void set_signature(uint8_t a, uint8_t b, uint8_t c, uint8_t d)
 {
@@ -125,13 +143,31 @@ static uint8_t valid_read_reply(const fn_raw_response_t *response)
     return 1;
 }
 
+static uint8_t valid_network_reply(uint16_t count, uint8_t flags)
+{
+    uint8_t index;
+
+    if (count != FNACCEPT_NETWORK_REPLY_LEN || flags != FN_READ_EOF) {
+        return 0;
+    }
+    for (index = 0; index < FNACCEPT_NETWORK_REPLY_LEN; ++index) {
+        if (network_reply[index] != FNACCEPT_NETWORK_REPLY_TEXT[index]) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
 int main(void)
 {
     FN_TIME_T clock_value;
     fn_raw_response_t file_response;
+    fn_handle_t network_handle;
     uint8_t status;
     uint8_t index;
     uint8_t request_length;
+    uint8_t read_flags;
+    uint16_t transferred;
 
     set_signature('A', 'C', '?', '?');
     result[FNACCEPT_VERSION] = FNACCEPT_RESULT_VERSION;
@@ -145,10 +181,19 @@ int main(void)
     result[FNACCEPT_FILE_READ_STATUS] = 0xff;
     result[FNACCEPT_FILE_READ_DEVICE_STATUS] = 0xff;
     result[FNACCEPT_FILE_VERIFY] = 0;
+    result[FNACCEPT_NETWORK_OPEN_STATUS] = 0xff;
+    result[FNACCEPT_NETWORK_WRITE_STATUS] = 0xff;
+    result[FNACCEPT_NETWORK_READ_STATUS] = 0xff;
+    result[FNACCEPT_NETWORK_CLOSE_STATUS] = 0xff;
+    result[FNACCEPT_NETWORK_VERIFY] = 0;
     for (index = FNACCEPT_FILE_WRITE_RESPONSE_LENGTH;
-         index < FNACCEPT_FILE_VERIFY; ++index) {
+         index < (uint8_t)(FNACCEPT_NETWORK_REPLY + FNACCEPT_NETWORK_REPLY_LEN); ++index) {
         result[index] = 0;
     }
+    result[FNACCEPT_NETWORK_OPEN_STATUS] = 0xff;
+    result[FNACCEPT_NETWORK_WRITE_STATUS] = 0xff;
+    result[FNACCEPT_NETWORK_READ_STATUS] = 0xff;
+    result[FNACCEPT_NETWORK_CLOSE_STATUS] = 0xff;
     for (index = 0; index != 8; ++index) {
         result[FNACCEPT_CLOCK_VALUE + index] = 0;
     }
@@ -205,7 +250,57 @@ int main(void)
 
     result[FNACCEPT_FILE_VERIFY] = 1;
     result[FNACCEPT_STAGE] = 5;
-    set_signature('A', 'F', 'P', '!');
+    network_handle = FN_INVALID_HANDLE;
+    status = fn_open(&network_handle, FN_METHOD_POST, FNACCEPT_NETWORK_URI, 0);
+    result[FNACCEPT_NETWORK_OPEN_STATUS] = status;
+    result[FNACCEPT_NETWORK_HANDLE] = (uint8_t)network_handle;
+    result[FNACCEPT_NETWORK_HANDLE + 1u] = (uint8_t)(network_handle >> 8);
+    if (status != FN_OK || network_handle == FN_INVALID_HANDLE) {
+        set_signature('A', 'C', 'F', '!');
+        return 1;
+    }
+
+    result[FNACCEPT_STAGE] = 6;
+    transferred = 0;
+    status = fn_write(network_handle, 0,
+                      (const uint8_t *)FNACCEPT_NETWORK_WRITE_MARKER,
+                      FNACCEPT_NETWORK_WRITE_MARKER_LEN, &transferred);
+    result[FNACCEPT_NETWORK_WRITE_STATUS] = status;
+    result[FNACCEPT_NETWORK_WRITE_COUNT] = (uint8_t)transferred;
+    result[FNACCEPT_NETWORK_WRITE_COUNT + 1u] = (uint8_t)(transferred >> 8);
+    if (status != FN_OK || transferred != FNACCEPT_NETWORK_WRITE_MARKER_LEN) {
+        set_signature('A', 'C', 'F', '!');
+        return 1;
+    }
+
+    result[FNACCEPT_STAGE] = 7;
+    transferred = 0;
+    read_flags = 0;
+    status = fn_read(network_handle, 0, network_reply, sizeof(network_reply),
+                     &transferred, &read_flags);
+    result[FNACCEPT_NETWORK_READ_STATUS] = status;
+    result[FNACCEPT_NETWORK_READ_COUNT] = (uint8_t)transferred;
+    result[FNACCEPT_NETWORK_READ_COUNT + 1u] = (uint8_t)(transferred >> 8);
+    result[FNACCEPT_NETWORK_READ_FLAGS] = read_flags;
+    for (index = 0; index < FNACCEPT_NETWORK_REPLY_LEN; ++index) {
+        result[FNACCEPT_NETWORK_REPLY + index] = network_reply[index];
+    }
+    if (status != FN_OK || !valid_network_reply(transferred, read_flags)) {
+        set_signature('A', 'C', 'F', '!');
+        return 1;
+    }
+
+    result[FNACCEPT_NETWORK_VERIFY] = 1;
+    result[FNACCEPT_STAGE] = 8;
+    status = fn_close(network_handle);
+    result[FNACCEPT_NETWORK_CLOSE_STATUS] = status;
+    if (status != FN_OK) {
+        set_signature('A', 'C', 'F', '!');
+        return 1;
+    }
+
+    result[FNACCEPT_STAGE] = 9;
+    set_signature('A', 'N', 'P', '!');
     for (;;) {
         if (++result[FNACCEPT_HEARTBEAT] == 0) {
             ++result[FNACCEPT_HEARTBEAT_HIGH];
