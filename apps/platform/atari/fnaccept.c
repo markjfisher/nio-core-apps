@@ -13,7 +13,7 @@
 /* fn_disk_*() correctly retains its bounded 512-byte codec buffers in static
  * storage on cc65.  Keep the observable block above that enlarged BSS range. */
 #define FNACCEPT_RESULT_ADDR 0x0B00u
-#define FNACCEPT_RESULT_VERSION 6u
+#define FNACCEPT_RESULT_VERSION 7u
 #define FNACCEPT_MEMLO_ADDR 0x02E7u
 #define FNACCEPT_MEMTOP_ADDR 0x02E5u
 #define FNACCEPT_RAMTOP_ADDR 0x006Au
@@ -103,7 +103,16 @@ enum {
      * File reply fields.  In the malformed-P-length scenario the first Write
      * has already reached FileDevice, but its terminal R is rejected. */
     FNACCEPT_FILE_FAILURE_STATUS = 83,
-    FNACCEPT_FILE_RECOVERY_KIND = 84
+    FNACCEPT_FILE_RECOVERY_KIND = 84,
+    FNACCEPT_CAPABILITY_STATUS = 85,
+    FNACCEPT_CAPABILITY_MAX_PAYLOAD = 86,
+    FNACCEPT_CAPABILITY_FLAGS = 88,
+    FNACCEPT_PROC_RESULT = 89
+};
+
+enum {
+    FNACCEPT_PROC_NOT_ADVERTISED = 1,
+    FNACCEPT_PROC_ADVERTISED_UNEXERCISED = 2
 };
 
 static volatile uint8_t *const result = (volatile uint8_t *)FNACCEPT_RESULT_ADDR;
@@ -326,6 +335,11 @@ int main(void)
     result[FNACCEPT_DISK_FLUSH_STATUS] = 0xff;
     result[FNACCEPT_DISK_READ_STATUS] = 0xff;
     result[FNACCEPT_FILE_RECOVERY_WRITE_STATUS] = 0xff;
+    result[FNACCEPT_CAPABILITY_STATUS] = 0xff;
+    result[FNACCEPT_CAPABILITY_MAX_PAYLOAD] = 0;
+    result[FNACCEPT_CAPABILITY_MAX_PAYLOAD + 1u] = 0;
+    result[FNACCEPT_CAPABILITY_FLAGS] = 0;
+    result[FNACCEPT_PROC_RESULT] = 0xff;
     for (index = 0; index != 8; ++index) {
         result[FNACCEPT_CLOCK_VALUE + index] = 0;
     }
@@ -338,6 +352,24 @@ int main(void)
     }
 
     result[FNACCEPT_STAGE] = 2;
+    status = fn_atari_query_capabilities();
+    result[FNACCEPT_CAPABILITY_STATUS] = status;
+    put_result_u16(FNACCEPT_CAPABILITY_MAX_PAYLOAD, fn_atari_max_payload());
+    result[FNACCEPT_CAPABILITY_FLAGS] = fn_atari_capability_flags();
+    /* Native-v1 currently advertises no optional PROC notification.  This is
+     * an accepted capability outcome, not a failed mandatory test: installing
+     * a VPRCED handler or synthesising a notification here would prove nothing
+     * about the production endpoint. */
+    result[FNACCEPT_PROC_RESULT] =
+        (result[FNACCEPT_CAPABILITY_FLAGS] & FN_ATARI_CAP_PROC) != 0u
+            ? FNACCEPT_PROC_ADVERTISED_UNEXERCISED
+            : FNACCEPT_PROC_NOT_ADVERTISED;
+    if (status != FN_OK) {
+        set_signature('A', 'C', 'F', '!');
+        return 1;
+    }
+
+    result[FNACCEPT_STAGE] = 3;
     status = fn_clock_get(&clock_value);
     result[FNACCEPT_CLOCK_STATUS] = status;
     for (index = 0; index != 8; ++index) {
@@ -348,7 +380,7 @@ int main(void)
         return 1;
     }
 
-    result[FNACCEPT_STAGE] = 3;
+    result[FNACCEPT_STAGE] = 4;
     file_recovery = 0;
     request_length = build_file_request(FNACCEPT_FILE_CMD_WRITE, file_recovery);
     status = fn_raw_call(FN_DEVICE_FILE, FNACCEPT_FILE_CMD_WRITE,
@@ -371,7 +403,7 @@ int main(void)
         result[FNACCEPT_FILE_RECOVERY_ATTEMPTED] = 1;
         result[FNACCEPT_FILE_RECOVERY_KIND] = 1;
         file_recovery = 1;
-        result[FNACCEPT_STAGE] = 4;
+        result[FNACCEPT_STAGE] = 5;
         request_length = build_file_request(FNACCEPT_FILE_CMD_WRITE, file_recovery);
         status = fn_raw_call(FN_DEVICE_FILE, FNACCEPT_FILE_CMD_WRITE,
                              file_request, request_length,
@@ -392,7 +424,7 @@ int main(void)
         return 1;
     }
 
-    result[FNACCEPT_STAGE] = 5;
+    result[FNACCEPT_STAGE] = 6;
     request_length = build_file_request(FNACCEPT_FILE_CMD_READ, file_recovery);
     status = fn_raw_call(FN_DEVICE_FILE, FNACCEPT_FILE_CMD_READ,
                          file_request, request_length,
@@ -409,7 +441,7 @@ int main(void)
     }
 
     result[FNACCEPT_FILE_VERIFY] = 1;
-    result[FNACCEPT_STAGE] = 6;
+    result[FNACCEPT_STAGE] = 7;
     network_handle = FN_INVALID_HANDLE;
     status = fn_open(&network_handle, FN_METHOD_POST, FNACCEPT_NETWORK_URI, 0);
     result[FNACCEPT_NETWORK_OPEN_STATUS] = status;
@@ -420,7 +452,7 @@ int main(void)
         return 1;
     }
 
-    result[FNACCEPT_STAGE] = 7;
+    result[FNACCEPT_STAGE] = 8;
     transferred = 0;
     status = fn_write(network_handle, 0,
                       (const uint8_t *)FNACCEPT_NETWORK_WRITE_MARKER,
@@ -433,7 +465,7 @@ int main(void)
         return 1;
     }
 
-    result[FNACCEPT_STAGE] = 8;
+    result[FNACCEPT_STAGE] = 9;
     transferred = 0;
     read_flags = 0;
     status = fn_read(network_handle, 0, network_reply, sizeof(network_reply),
@@ -451,7 +483,7 @@ int main(void)
     }
 
     result[FNACCEPT_NETWORK_VERIFY] = 1;
-    result[FNACCEPT_STAGE] = 9;
+    result[FNACCEPT_STAGE] = 10;
     status = fn_close(network_handle);
     result[FNACCEPT_NETWORK_CLOSE_STATUS] = status;
     if (status != FN_OK) {
@@ -459,7 +491,7 @@ int main(void)
         return 1;
     }
 
-    result[FNACCEPT_STAGE] = 10;
+    result[FNACCEPT_STAGE] = 11;
     status = fn_disk_info(FNACCEPT_DISK_SLOT, &disk_info);
     result[FNACCEPT_DISK_INFO_STATUS] = status;
     result[FNACCEPT_DISK_FLAGS] = disk_info.flags;
@@ -476,7 +508,7 @@ int main(void)
         return 1;
     }
 
-    result[FNACCEPT_STAGE] = 11;
+    result[FNACCEPT_STAGE] = 12;
     for (index = 0; index < FNACCEPT_DISK_SECTOR_BYTES; ++index) {
         disk_write[index] = disk_pattern(index);
     }
@@ -490,7 +522,7 @@ int main(void)
         return 1;
     }
 
-    result[FNACCEPT_STAGE] = 12;
+    result[FNACCEPT_STAGE] = 13;
     status = fn_disk_flush(FNACCEPT_DISK_SLOT);
     result[FNACCEPT_DISK_FLUSH_STATUS] = status;
     if (status != FN_OK) {
@@ -498,7 +530,7 @@ int main(void)
         return 1;
     }
 
-    result[FNACCEPT_STAGE] = 13;
+    result[FNACCEPT_STAGE] = 14;
     transferred = 0;
     status = fn_disk_read_sector(FNACCEPT_DISK_SLOT, FNACCEPT_DISK_LBA,
                                  disk_read, FNACCEPT_DISK_SECTOR_BYTES, &transferred);
@@ -510,7 +542,7 @@ int main(void)
     }
 
     result[FNACCEPT_DISK_VERIFY] = 1;
-    result[FNACCEPT_STAGE] = 14;
+    result[FNACCEPT_STAGE] = 15;
     set_signature('A', 'D', 'P', '!');
     for (;;) {
         if (++result[FNACCEPT_HEARTBEAT] == 0) {
