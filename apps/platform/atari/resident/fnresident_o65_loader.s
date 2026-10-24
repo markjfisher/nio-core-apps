@@ -14,15 +14,15 @@ MEMLO           = $02E7
 SDLSTL          = $0230
 SAVMSC          = $0058
 
-LOADER_START    = $3800
-; The staged o65 image currently occupies $4300..$8292.  Keep diagnostics
+LOADER_START    = $3c00
+; The staged o65 image may occupy $4800..$8d35.  Keep diagnostics
 ; above that fixed staging window: writing a result into the staged module
 ; while parsing it corrupts subsequent TEXT/DATA and relocation records.
-RESULT          = $8300          ; transient inspection only, never reserved
+RESULT          = $9000          ; transient inspection only, never reserved
 ; The GET/CLOSE public closure is larger than the initial OPEN-only image.
-; Keep the source below the live C-stack floor while leaving $3800 loader,
-; $4000 probe, and $4200 launcher regions untouched.
-STAGE           = $4300
+; Keep the source below the live C-stack floor while leaving the $3c00 loader,
+; $4400 launcher, and $4500 probe regions untouched.
+STAGE           = $4800
 FNR_HEADER      = 22
 CC65_ZP         = $0082
 CC65_ZP_SIZE    = 26

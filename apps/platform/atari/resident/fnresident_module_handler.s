@@ -14,6 +14,7 @@ CC65_ZP_SIZE = 26
         .import _fn_init
         .import _fnresident_gateway_open
         .import _fnresident_gateway_get
+        .import _fnresident_gateway_put
         .import _fnresident_gateway_close
         .import _fnresident_gateway_iocb
         .import _fnresident_gateway_cstack_top
@@ -143,7 +144,36 @@ fnresident_close_gateway:
         ldy gateway_status
         rts
 
+fnresident_put_gateway:
+        ; PUT receives its byte in A. Preserve caller state around the
+        ; foreground public-library call; C consumes the saved byte below.
+        pha
+        lda gateway_busy
+        bne gateway_reentrant
+        pla
+        sta caller_a
+        sta _fnresident_gateway_byte
+        stx caller_x
+        inc gateway_busy
+        jsr save_caller_zp
+        ldx caller_x
+        stx _fnresident_gateway_iocb
+        lda _fnresident_gateway_cstack_top
+        sta CC65_ZP
+        lda _fnresident_gateway_cstack_top+1
+        sta CC65_ZP+1
+        jsr _fnresident_gateway_put
+        sta gateway_status
+        jsr restore_caller_zp
+        dec gateway_busy
+        lda caller_a
+        ldx caller_x
+        ldy gateway_status
+        rts
+
 fnresident_put:
+        jmp fnresident_put_gateway
+
 fnresident_status:
 fnresident_special:
         ldy #FNCNOT
