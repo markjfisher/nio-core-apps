@@ -63,6 +63,27 @@ uint8_t fnresident_gateway_byte;
 
 static fnresident_owner_t owners[FN_MAX_SESSIONS];
 
+/* A write exchange is never replayed by the resident handler: fn_write()
+ * already preserves the public transport's retained-response recovery.  If
+ * its result is uncertain, latch the owner and let CLOSE retire the handle
+ * without issuing another body request. */
+static uint8_t fnresident_flush_write(fnresident_owner_t *owner)
+{
+    uint16_t written;
+    uint8_t result;
+
+    written = 0;
+    result = fn_write(owner->handle, owner->write_offset,
+                      owner->cache, owner->cache_length, &written);
+    if (result != FN_OK || written != owner->cache_length) {
+        owner->write_fault = 1;
+        return FNR_CIO_DONE_ERROR;
+    }
+    owner->write_offset += written;
+    owner->cache_length = 0;
+    return FNR_CIO_SUCCESS;
+}
+
 static uint8_t fnresident_find_owner(uint8_t iocb_offset)
 {
     uint8_t i;
@@ -224,13 +245,11 @@ uint8_t fnresident_gateway_get(void)
 
 /* PUT accepts one CIO byte in fnresident_gateway_byte. A full 128-byte cache
  * is sent once through fn_write(); a failure latches the session rather than
- * retrying an uncertain side effect. Unknown-length body commitment remains
- * intentionally outside this increment. */
+ * retrying an uncertain side effect. CLOSE owns the one unknown-length body
+ * commitment after all buffered bytes have been accepted. */
 uint8_t fnresident_gateway_put(void)
 {
     uint8_t owner;
-    uint8_t result;
-    uint16_t written;
 
     owner = fnresident_find_owner(fnresident_gateway_iocb);
     if (owner == FN_MAX_SESSIONS) {
@@ -248,17 +267,7 @@ uint8_t fnresident_gateway_put(void)
         return FNR_CIO_SUCCESS;
     }
 
-    written = 0;
-    result = fn_write(owners[owner].handle, owners[owner].write_offset,
-                      owners[owner].cache, sizeof(owners[owner].cache),
-                      &written);
-    if (result != FN_OK || written != sizeof(owners[owner].cache)) {
-        owners[owner].write_fault = 1;
-        return FNR_CIO_DONE_ERROR;
-    }
-    owners[owner].write_offset += written;
-    owners[owner].cache_length = 0;
-    return FNR_CIO_SUCCESS;
+    return fnresident_flush_write(&owners[owner]);
 }
 
 /* fn_close() releases the public library session even if its terminal
@@ -273,10 +282,30 @@ uint8_t fnresident_gateway_close(void)
     if (owner == FN_MAX_SESSIONS) {
         return FNR_CIO_NOT_OPEN;
     }
-    result = fn_close(owners[owner].handle);
-    if (owners[owner].mode == FNR_OWNER_WRITE &&
-        (owners[owner].cache_length != 0 || owners[owner].write_fault)) {
-        result = FN_ERR_INVALID;
+    result = FN_OK;
+    if (owners[owner].mode == FNR_OWNER_WRITE) {
+        if (!owners[owner].write_fault && owners[owner].cache_length != 0) {
+            result = fnresident_flush_write(&owners[owner]);
+        }
+        /* A zero-length public write is the single explicit unknown-body
+         * commitment. It follows only a successful full/partial flush. */
+        if ((result == FN_OK || result == FNR_CIO_SUCCESS) &&
+            !owners[owner].write_fault) {
+            uint16_t committed = 0;
+            result = fn_write(owners[owner].handle, owners[owner].write_offset,
+                              NULL, 0, &committed);
+            if (result != FN_OK || committed != 0) {
+                owners[owner].write_fault = 1;
+            }
+        }
+        if (result != FN_OK && result != FNR_CIO_SUCCESS) {
+            owners[owner].write_fault = 1;
+        }
+    }
+    /* Retire the local/remote ownership exactly once even after a failed
+     * flush or commit. Do not retain an uncertain body for a later replay. */
+    if (fn_close(owners[owner].handle) != FN_OK) {
+        result = FN_ERR_IO;
     }
     owners[owner].active = 0;
     owners[owner].handle = FN_INVALID_HANDLE;
@@ -286,5 +315,6 @@ uint8_t fnresident_gateway_close(void)
     owners[owner].cache_index = 0;
     owners[owner].eof = 0;
     owners[owner].write_fault = 0;
-    return result == FN_OK ? FNR_CIO_SUCCESS : FNR_CIO_DONE_ERROR;
+    return result == FN_OK || result == FNR_CIO_SUCCESS ?
+           FNR_CIO_SUCCESS : FNR_CIO_DONE_ERROR;
 }
