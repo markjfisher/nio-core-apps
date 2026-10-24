@@ -15,8 +15,14 @@ SDLSTL          = $0230
 SAVMSC          = $0058
 
 LOADER_START    = $3800
-RESULT          = $5400          ; transient inspection only, never reserved
-STAGE           = $5800
+; The staged o65 image currently occupies $4300..$8292.  Keep diagnostics
+; above that fixed staging window: writing a result into the staged module
+; while parsing it corrupts subsequent TEXT/DATA and relocation records.
+RESULT          = $8300          ; transient inspection only, never reserved
+; The GET/CLOSE public closure is larger than the initial OPEN-only image.
+; Keep the source below the live C-stack floor while leaving $3800 loader,
+; $4000 probe, and $4200 launcher regions untouched.
+STAGE           = $4300
 FNR_HEADER      = 22
 CC65_ZP         = $0082
 CC65_ZP_SIZE    = 26
@@ -462,9 +468,13 @@ load_module:
         jne load_bad
         jsr read_byte
         jne load_bad
-        lda base_ptr
+        ; Copy/parse helpers reuse `base_ptr`; relocation records must be
+        ; addressed from the immutable allocated start, not that scratch
+        ; pointer.  The first real closure record ($0003, WORD/BSS) caught
+        ; this: it was previously applied through a corrupted reloc_ptr.
+        lda R_START
         sta reloc_ptr
-        lda base_ptr+1
+        lda R_START+1
         sta reloc_ptr+1
         lda text_size
         sta segment_size
@@ -740,9 +750,13 @@ relocate_segment:
         sec
         rts
 @module_base:
-        lda base_ptr
+        ; `base_ptr` is also transient copy/call scratch.  Relocation must
+        ; use the immutable allocation start recorded before any module byte
+        ; is consumed, otherwise a future loader helper can silently leave
+        ; absolute TEXT/DATA/BSS operands at their link-time addresses.
+        lda R_START
         sta reloc_value
-        lda base_ptr+1
+        lda R_START+1
         sta reloc_value+1
         jmp @kind
 @zp_base:

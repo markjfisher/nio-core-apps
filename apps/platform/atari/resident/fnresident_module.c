@@ -17,7 +17,6 @@
 #define FNR_IOCB_BASE       ((volatile uint8_t *)0x0340u)
 #define FNR_IOCB_COUNT      8u
 #define FNR_IOCB_SIZE       16u
-#define FNR_IOCB_UNIT       1u
 #define FNR_IOCB_BUFFER_LO  4u
 #define FNR_IOCB_BUFFER_HI  5u
 #define FNR_IOCB_AUX1       10u
@@ -26,7 +25,9 @@
  * CIO results, not DOS-specific extensions. */
 #define FNR_CIO_SUCCESS       0x01u /* SUCCES */
 #define FNR_CIO_ALREADY_OPEN  0x81u /* PRVOPN */
+#define FNR_CIO_NOT_OPEN       0x85u /* NOTOPN */
 #define FNR_CIO_BAD_IOCB      0x86u /* BADIOC */
+#define FNR_CIO_EOF            0x88u /* EOFERR */
 #define FNR_CIO_DONE_ERROR    0x90u /* DERROR */
 #define FNR_CIO_NOT_SUPPORTED 0x92u /* FNCNOT */
 #define FNR_CIO_TOO_MANY      0xa1u /* TMOF */
@@ -38,6 +39,11 @@ typedef struct {
     uint8_t active;
     uint8_t iocb_offset;
     fn_handle_t handle;
+    uint32_t read_offset;
+    uint8_t cache_length;
+    uint8_t cache_index;
+    uint8_t eof;
+    uint8_t cache[128];
 } fnresident_owner_t;
 
 /* The assembly gateway stores its hardware-CIO input here before it borrows
@@ -46,6 +52,7 @@ typedef struct {
  * selected; every later foreground call restores that exact stack top. */
 uint8_t fnresident_gateway_iocb;
 uint16_t fnresident_gateway_cstack_top;
+uint8_t fnresident_gateway_byte;
 
 static fnresident_owner_t owners[FN_MAX_SESSIONS];
 
@@ -149,6 +156,74 @@ uint8_t fnresident_gateway_open(void)
 
     owners[owner].handle = handle;
     owners[owner].iocb_offset = offset;
+    owners[owner].read_offset = 0;
+    owners[owner].cache_length = 0;
+    owners[owner].cache_index = 0;
+    owners[owner].eof = 0;
     owners[owner].active = 1;
     return FNR_CIO_SUCCESS;
+}
+
+/* Return one CIO byte from the bounded per-session cache.  A cache refill is
+ * a single public fn_read() of at most 128 bytes; the handler owns neither
+ * transport frames nor a hidden third session. */
+uint8_t fnresident_gateway_get(void)
+{
+    uint8_t owner;
+    uint8_t result;
+    uint8_t flags;
+    uint16_t received;
+
+    owner = fnresident_find_owner(fnresident_gateway_iocb);
+    if (owner == FN_MAX_SESSIONS) {
+        return FNR_CIO_NOT_OPEN;
+    }
+
+    if (owners[owner].cache_index >= owners[owner].cache_length) {
+        if (owners[owner].eof) {
+            return FNR_CIO_EOF;
+        }
+        received = 0;
+        flags = 0;
+        result = fn_read(owners[owner].handle, owners[owner].read_offset,
+                         owners[owner].cache, sizeof(owners[owner].cache),
+                         &received, &flags);
+        if (result != FN_OK) {
+            return FNR_CIO_DONE_ERROR;
+        }
+        owners[owner].read_offset += received;
+        owners[owner].cache_length = (uint8_t)received;
+        owners[owner].cache_index = 0;
+        if ((flags & FN_READ_EOF) != 0) {
+            owners[owner].eof = 1;
+        }
+        if (received == 0) {
+            return FNR_CIO_EOF;
+        }
+    }
+
+    fnresident_gateway_byte = owners[owner].cache[owners[owner].cache_index++];
+    return FNR_CIO_SUCCESS;
+}
+
+/* fn_close() releases the public library session even if its terminal
+ * transport exchange reports an error. Mirror that ownership rule locally so
+ * a failed Close cannot strand one of the two resident slots. */
+uint8_t fnresident_gateway_close(void)
+{
+    uint8_t owner;
+    uint8_t result;
+
+    owner = fnresident_find_owner(fnresident_gateway_iocb);
+    if (owner == FN_MAX_SESSIONS) {
+        return FNR_CIO_NOT_OPEN;
+    }
+    result = fn_close(owners[owner].handle);
+    owners[owner].active = 0;
+    owners[owner].handle = FN_INVALID_HANDLE;
+    owners[owner].read_offset = 0;
+    owners[owner].cache_length = 0;
+    owners[owner].cache_index = 0;
+    owners[owner].eof = 0;
+    return result == FN_OK ? FNR_CIO_SUCCESS : FNR_CIO_DONE_ERROR;
 }
