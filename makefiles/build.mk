@@ -121,6 +121,32 @@ $(FNRESIDENT_HANDLER_OBJ): $(FNRESIDENT_HANDLER_SRC) | $(OBJ_DIR)
 $(BIN_DIR)/fnresident$(PROGRAM_EXT): $(FNRESIDENT_HANDLER_OBJ)
 $(BIN_DIR)/fnresident$(PROGRAM_EXT): ATARI_START_ADDRESS = 0x1D00
 $(BIN_DIR)/fnresident$(PROGRAM_EXT): ATARI_LINK_CONFIG = makefiles/cc65-atari-resident.cfg
+
+# The normal fnresident XEX remains the fixed-image regression scaffold.  The
+# production-loader increment builds this separate crt0-free o65 payload; it
+# contains the real public Atari archive closure and is entered by a resident
+# CIO vector after the transient loader has initialized it.
+FNRESIDENT_MODULE_DIR := $(PLATFORM_APP_DIR)/resident
+FNRESIDENT_MODULE_C := $(FNRESIDENT_MODULE_DIR)/fnresident_module.c
+FNRESIDENT_MODULE_S := $(FNRESIDENT_MODULE_DIR)/fnresident_module_handler.s
+FNRESIDENT_MODULE_C_OBJ := $(OBJ_DIR)/$(FNRESIDENT_MODULE_C:.c=.o)
+FNRESIDENT_MODULE_S_OBJ := $(OBJ_DIR)/$(FNRESIDENT_MODULE_S:.s=.o)
+FNRESIDENT_MODULE := $(BIN_DIR)/fnresident-module.o65
+
+.PHONY: fnresident-module
+fnresident-module: $(FNRESIDENT_MODULE)
+
+$(FNRESIDENT_MODULE_C_OBJ): $(FNRESIDENT_MODULE_C) | $(OBJ_DIR)
+	@mkdir -p $(dir $@)
+	$(call compile_c)
+
+$(FNRESIDENT_MODULE_S_OBJ): $(FNRESIDENT_MODULE_S) | $(OBJ_DIR)
+	@mkdir -p $(dir $@)
+	$(CC) -t $(TARGET) -c $(CFLAGS) -o $@ $<
+
+$(FNRESIDENT_MODULE): $(FNRESIDENT_MODULE_C_OBJ) $(FNRESIDENT_MODULE_S_OBJ) $(NIO_LIB_FILE) | $(BIN_DIR)
+	ld65 -C ../cc65/cfg/module.cfg -o $@ -m $(basename $@).map -Ln $(basename $@).lbl \
+		$(FNRESIDENT_MODULE_C_OBJ) $(FNRESIDENT_MODULE_S_OBJ) $(NIO_LIB_FILE) $(CC65_HOME)/lib/atari.lib
 endif
 
 # The public-API acceptance XEX pulls the bounded DiskDevice client in
