@@ -595,8 +595,13 @@ parse_o65_header:
         clc
         lda init_size
         adc bss_size
+        php                     ; retain the carry into the allocation high byte
         cmp FNR_ALLOC
-        jne parse_bad
+        beq :+
+        plp
+        jmp parse_bad
+:
+        plp
         lda init_size+1
         adc bss_size+1
         cmp FNR_ALLOC+1
