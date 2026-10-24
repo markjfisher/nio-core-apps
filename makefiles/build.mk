@@ -146,7 +146,7 @@ $(FNRESIDENT_MODULE_S_OBJ): $(FNRESIDENT_MODULE_S) | $(OBJ_DIR)
 
 $(FNRESIDENT_MODULE): $(FNRESIDENT_MODULE_C_OBJ) $(FNRESIDENT_MODULE_S_OBJ) $(NIO_LIB_FILE) | $(BIN_DIR)
 	ld65 -C ../cc65/cfg/module.cfg -o $@ -m $(basename $@).map -Ln $(basename $@).lbl \
-		$(FNRESIDENT_MODULE_C_OBJ) $(FNRESIDENT_MODULE_S_OBJ) $(NIO_LIB_FILE) $(CC65_HOME)/lib/atari.lib
+		$(FNRESIDENT_MODULE_S_OBJ) $(FNRESIDENT_MODULE_C_OBJ) $(NIO_LIB_FILE) $(CC65_HOME)/lib/atari.lib
 endif
 
 # The public-API acceptance XEX pulls the bounded DiskDevice client in
