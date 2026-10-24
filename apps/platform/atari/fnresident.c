@@ -16,7 +16,8 @@
 #define FNRESIDENT_SDLSTL_ADDR 0x0230u
 #define FNRESIDENT_SAVMSC_ADDR 0x0058u
 #define FNRESIDENT_STACK_BYTES 0x0800u
-#define FNRESIDENT_HATABS_BYTES 35u
+#define FNRESIDENT_HATABS_ENTRIES 11u
+#define FNRESIDENT_HATABS_BYTES (FNRESIDENT_HATABS_ENTRIES * 3u)
 #define FNRESIDENT_HATABS_STEP 3u
 
 /* Names and values are frozen from cc65/asminc/atari.inc: SUCCES=$01 and
@@ -129,16 +130,10 @@ int main(void)
     result->sdlstl = read16(FNRESIDENT_SDLSTL_ADDR);
     result->savmsc = read16(FNRESIDENT_SAVMSC_ADDR);
 
-    /* The full linked image (including fn_init state) must fit below the
-     * cc65 stack floor and before the OS-owned display allocation. */
-    if (resident_start < old_memlo || resident_end <= resident_start ||
-        resident_end > stack_floor || resident_end > memtop ||
-        resident_end > result->sdlstl || resident_end > result->savmsc) {
-        result->outcome = FNRESIDENT_MEMORY_UNSAFE;
-        return 0;
-    }
-
     slot = 0xff;
+    /* XL/XE HATABS owns eleven three-byte entries at $031A-$033A;
+     * $033B/$033C are the mandatory zero terminator and $033D+ is PUPBT.
+     * Stop at the first terminator rather than looking beyond it. */
     for (index = 0; index < FNRESIDENT_HATABS_BYTES; index += FNRESIDENT_HATABS_STEP) {
         if (hatabs[index] == 'N') {
             if (read16((uint16_t)(FNRESIDENT_HATABS_ADDR + index + 1)) == handler_table) {
@@ -149,12 +144,25 @@ int main(void)
             }
             return 0;
         }
-        if (hatabs[index] == 0 && slot == 0xff) {
+        if (hatabs[index] == 0) {
             slot = index;
+            break;
         }
     }
     if (slot == 0xff) {
         result->outcome = FNRESIDENT_NO_HATABS_SLOT;
+        return 0;
+    }
+
+    /* The full linked image (including fn_init state) must fit below the
+     * cc65 stack floor and before the OS-owned display allocation.  This is
+     * deliberately after the non-mutating ownership scan: on a true
+     * reinstall MEMLO already equals resident_end, which is proof that the
+     * active image is reserved rather than a reason to reinitialize it. */
+    if (resident_start < old_memlo || resident_end <= resident_start ||
+        resident_end > stack_floor || resident_end > memtop ||
+        resident_end > result->sdlstl || resident_end > result->savmsc) {
+        result->outcome = FNRESIDENT_MEMORY_UNSAFE;
         return 0;
     }
 
