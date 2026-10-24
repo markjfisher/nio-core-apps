@@ -16,6 +16,7 @@ CC65_ZP_SIZE = 26
         .import _fnresident_gateway_get
         .import _fnresident_gateway_put
         .import _fnresident_gateway_close
+        .import _fnresident_gateway_status
         .import _fnresident_gateway_iocb
         .import _fnresident_gateway_cstack_top
         .import _fnresident_gateway_byte
@@ -175,6 +176,31 @@ fnresident_put:
         jmp fnresident_put_gateway
 
 fnresident_status:
+        pha
+        lda gateway_busy
+        beq :+
+        jmp gateway_reentrant
+:
+        pla
+        sta caller_a
+        stx caller_x
+        inc gateway_busy
+        jsr save_caller_zp
+        ldx caller_x
+        stx _fnresident_gateway_iocb
+        lda _fnresident_gateway_cstack_top
+        sta CC65_ZP
+        lda _fnresident_gateway_cstack_top+1
+        sta CC65_ZP+1
+        jsr _fnresident_gateway_status
+        sta gateway_status
+        jsr restore_caller_zp
+        dec gateway_busy
+        lda caller_a
+        ldx caller_x
+        ldy gateway_status
+        rts
+
 fnresident_special:
         ldy #FNCNOT
         rts

@@ -50,6 +50,7 @@ typedef struct {
     uint8_t cache_index;
     uint8_t eof;
     uint8_t write_fault;
+    uint8_t write_committed;
     uint8_t cache[128];
 } fnresident_owner_t;
 
@@ -81,6 +82,37 @@ static uint8_t fnresident_flush_write(fnresident_owner_t *owner)
     }
     owner->write_offset += written;
     owner->cache_length = 0;
+    return FNR_CIO_SUCCESS;
+}
+
+/* The network service uses a zero-byte Write as the one terminal commitment
+ * for an unknown-length PUT body.  STATUS and CLOSE share this path: after a
+ * successful commitment it is never sent again, and a failed exchange is
+ * never replayed by this resident handler. */
+static uint8_t fnresident_finish_write(fnresident_owner_t *owner)
+{
+    uint16_t committed;
+    uint8_t result;
+
+    if (owner->write_fault) {
+        return FNR_CIO_DONE_ERROR;
+    }
+    if (owner->write_committed) {
+        return FNR_CIO_SUCCESS;
+    }
+    if (owner->cache_length != 0) {
+        result = fnresident_flush_write(owner);
+        if (result != FNR_CIO_SUCCESS) {
+            return result;
+        }
+    }
+    committed = 0;
+    result = fn_write(owner->handle, owner->write_offset, NULL, 0, &committed);
+    if (result != FN_OK || committed != 0) {
+        owner->write_fault = 1;
+        return FNR_CIO_DONE_ERROR;
+    }
+    owner->write_committed = 1;
     return FNR_CIO_SUCCESS;
 }
 
@@ -194,6 +226,7 @@ uint8_t fnresident_gateway_open(void)
     owners[owner].cache_index = 0;
     owners[owner].eof = 0;
     owners[owner].write_fault = 0;
+    owners[owner].write_committed = 0;
     owners[owner].active = 1;
     return FNR_CIO_SUCCESS;
 }
@@ -261,6 +294,9 @@ uint8_t fnresident_gateway_put(void)
     if (owners[owner].write_fault) {
         return FNR_CIO_DONE_ERROR;
     }
+    if (owners[owner].write_committed) {
+        return FNR_CIO_DONE_ERROR;
+    }
 
     owners[owner].cache[owners[owner].cache_length++] = fnresident_gateway_byte;
     if (owners[owner].cache_length != sizeof(owners[owner].cache)) {
@@ -268,6 +304,44 @@ uint8_t fnresident_gateway_put(void)
     }
 
     return fnresident_flush_write(&owners[owner]);
+}
+
+/* CIO STATUS has no application-owned transport state. It consults the
+ * public session through fn_info(); an input stream that has consumed its
+ * final EOF-marked cache reports EOF, while a live input and any successfully
+ * finalized output report SUCCES. */
+uint8_t fnresident_gateway_status(void)
+{
+    uint8_t owner;
+    uint8_t result;
+    uint8_t flags;
+    uint16_t http_status;
+    uint32_t content_length;
+
+    owner = fnresident_find_owner(fnresident_gateway_iocb);
+    if (owner == FN_MAX_SESSIONS) {
+        return FNR_CIO_NOT_OPEN;
+    }
+    if (owners[owner].mode == FNR_OWNER_WRITE) {
+        result = fnresident_finish_write(&owners[owner]);
+        if (result != FNR_CIO_SUCCESS) {
+            return result;
+        }
+    }
+
+    flags = 0;
+    http_status = 0;
+    content_length = 0;
+    result = fn_info(owners[owner].handle, &http_status, &content_length, &flags);
+    if (result != FN_OK) {
+        return FNR_CIO_DONE_ERROR;
+    }
+    if (owners[owner].mode == FNR_OWNER_READ &&
+        owners[owner].eof &&
+        owners[owner].cache_index >= owners[owner].cache_length) {
+        return FNR_CIO_EOF;
+    }
+    return FNR_CIO_SUCCESS;
 }
 
 /* fn_close() releases the public library session even if its terminal
@@ -284,23 +358,7 @@ uint8_t fnresident_gateway_close(void)
     }
     result = FN_OK;
     if (owners[owner].mode == FNR_OWNER_WRITE) {
-        if (!owners[owner].write_fault && owners[owner].cache_length != 0) {
-            result = fnresident_flush_write(&owners[owner]);
-        }
-        /* A zero-length public write is the single explicit unknown-body
-         * commitment. It follows only a successful full/partial flush. */
-        if ((result == FN_OK || result == FNR_CIO_SUCCESS) &&
-            !owners[owner].write_fault) {
-            uint16_t committed = 0;
-            result = fn_write(owners[owner].handle, owners[owner].write_offset,
-                              NULL, 0, &committed);
-            if (result != FN_OK || committed != 0) {
-                owners[owner].write_fault = 1;
-            }
-        }
-        if (result != FN_OK && result != FNR_CIO_SUCCESS) {
-            owners[owner].write_fault = 1;
-        }
+        result = fnresident_finish_write(&owners[owner]);
     }
     /* Retire the local/remote ownership exactly once even after a failed
      * flush or commit. Do not retain an uncertain body for a later replay. */
@@ -315,6 +373,7 @@ uint8_t fnresident_gateway_close(void)
     owners[owner].cache_index = 0;
     owners[owner].eof = 0;
     owners[owner].write_fault = 0;
+    owners[owner].write_committed = 0;
     return result == FN_OK || result == FNR_CIO_SUCCESS ?
            FNR_CIO_SUCCESS : FNR_CIO_DONE_ERROR;
 }
