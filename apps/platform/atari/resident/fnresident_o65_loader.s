@@ -37,6 +37,11 @@ CC65_ZP         = $0082
 CC65_ZP_SIZE    = 26
 STACK_RESERVE   = $0800
 HATABS_BYTES    = 33
+.ifdef ASM_RESIDENT
+MARKER_KIND = 'A'
+.else
+MARKER_KIND = 'R'
+.endif
 
 ; FNR1 wrapper offsets.
 FNR_VERSION     = STAGE+4
@@ -228,6 +233,22 @@ validate_wrapper:
         bne wrapper_bad
         lda FNR_ZP+1
         bne wrapper_bad
+.ifdef ASM_RESIDENT
+        ; Assembly payloads have no software stack. Reject accidental C
+        ; stack reservations rather than silently exceeding the RAM gate.
+        lda FNR_CSTACK
+        ora FNR_CSTACK+1
+        bne wrapper_bad
+        ; Permanent budget includes the conservative 26-byte ZP charge.
+        lda FNR_ALLOC+1
+        cmp #>(3072-CC65_ZP_SIZE)
+        bcc :+
+        bne wrapper_bad
+        lda FNR_ALLOC
+        cmp #<(3073-CC65_ZP_SIZE)
+        bcs wrapper_bad
+:
+.endif
         lda FNR_MODULE_LEN
         ora FNR_MODULE_LEN+1
         beq wrapper_bad
@@ -408,7 +429,7 @@ scan_hatabs:
         jne scan_foreign
         iny
         lda (marker_ptr),y
-        cmp #'R'
+        cmp #MARKER_KIND
         jne scan_foreign
         iny
         lda (marker_ptr),y
@@ -917,7 +938,7 @@ prepare_and_init:
         bne prepare_bad
         iny
         lda (marker_ptr),y
-        cmp #'R'
+        cmp #MARKER_KIND
         bne prepare_bad
         iny
         lda (marker_ptr),y

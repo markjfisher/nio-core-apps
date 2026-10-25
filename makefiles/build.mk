@@ -123,9 +123,9 @@ $(BIN_DIR)/fnresident$(PROGRAM_EXT): ATARI_START_ADDRESS = 0x1D00
 $(BIN_DIR)/fnresident$(PROGRAM_EXT): ATARI_LINK_CONFIG = makefiles/cc65-atari-resident.cfg
 
 # The normal fnresident XEX remains the fixed-image regression scaffold.  The
-# production-loader increment builds this separate crt0-free o65 payload; it
-# contains the real public Atari archive closure and is entered by a resident
-# CIO vector after the transient loader has initialized it.
+# original C prototype remains a separate crt0-free o65 functional reference.
+# It retains the public Atari archive closure for equivalence regressions.
+# Production MyDOS installation uses the CA65-only fnresident-asm target.
 FNRESIDENT_MODULE_DIR := $(PLATFORM_APP_DIR)/resident
 FNRESIDENT_MODULE_C := $(FNRESIDENT_MODULE_DIR)/fnresident_module.c
 FNRESIDENT_MODULE_S := $(FNRESIDENT_MODULE_DIR)/fnresident_module_handler.s
@@ -135,6 +135,15 @@ FNRESIDENT_MODULE := $(BIN_DIR)/fnresident-module.o65
 
 .PHONY: fnresident-module
 fnresident-module: $(FNRESIDENT_MODULE)
+
+# Production image: exactly one CA65 object, no C/runtime/archive inputs.
+.PHONY: fnresident-asm
+fnresident-asm: $(BIN_DIR)/fnresident-asm.o65
+	python3 tools/check_atari_resident_ram.py --module $< --map $(basename $<).map
+
+$(BIN_DIR)/fnresident-asm.o65: $(FNRESIDENT_MODULE_DIR)/fnresident_asm.s | $(BIN_DIR)
+	ca65 -o $(BIN_DIR)/fnresident-asm.o $<
+	ld65 -C ../cc65/cfg/module.cfg -o $@ -m $(basename $@).map -Ln $(basename $@).lbl $(BIN_DIR)/fnresident-asm.o
 
 $(FNRESIDENT_MODULE_C_OBJ): $(FNRESIDENT_MODULE_C) | $(OBJ_DIR)
 	@mkdir -p $(dir $@)
