@@ -18,9 +18,15 @@ SAVMSC          = $0058
 ; MyDOS loads only this transient code. The unchanged FNR1/o65 file is
 ; consumed through CIO after ownership has been resolved. Every byte loaded
 ; by DOS is above the maximum resident end, including on repeat installs.
+.ifdef SDX_CHILD
+LOADER_START    = _main
+STAGE           = stage_buf
+DISK_BUFFER     = disk_buf
+.else
 LOADER_START    = $6000
 STAGE           = $6e00          ; FNR1 + fixed o65 header only (48 bytes)
 DISK_BUFFER     = $6f00          ; 128-byte sequential read buffer
+.endif
 .else
 LOADER_START    = $3f00
 STAGE           = $4900
@@ -28,7 +34,11 @@ STAGE           = $4900
 ; The staged o65 image may occupy $4900..$9290.  Keep diagnostics
 ; above that fixed staging window: writing a result into the staged module
 ; while parsing it corrupts subsequent TEXT/DATA and relocation records.
+.ifdef SDX_CHILD
+RESULT          = result_buf
+.else
 RESULT          = $9380          ; transient inspection only, never reserved
+.endif
 ; The GET/CLOSE public closure is larger than the initial OPEN-only image.
 ; Keep the source below the live C-stack floor while leaving the $3f00 loader,
 ; $48e0 launcher, and $46a0 probe regions untouched.
@@ -124,6 +134,19 @@ _main:
         bcc :+
         jmp fail_format
 :
+.ifdef SDX_CHILD
+        ; The parent allocated exactly this build's payload size. Never copy
+        ; a changed disk payload into a smaller parent allocation.
+        lda FNR_ALLOC
+        cmp #<SDX_EXPECTED_ALLOC
+        bne @wrong_payload
+        lda FNR_ALLOC+1
+        cmp #>SDX_EXPECTED_ALLOC
+        beq :+
+@wrong_payload:
+        jmp fail_format
+:
+.endif
         jsr scan_hatabs
         bcc :+
         jmp finish              ; own, foreign, or no-slot result is final
@@ -151,6 +174,15 @@ _main:
         jmp finish
 
 finish:
+.ifdef SDX_CHILD
+        ; Parent remains in SDX's documented $0400-$06ff scratch area.
+        ldx #0
+@share: lda RESULT,x
+        sta $06b0,x
+        inx
+        cpx #40
+        bne @share
+.endif
 .ifdef DISK_SOURCE
         jsr disk_close
 .endif
@@ -253,10 +285,18 @@ validate_wrapper:
         ora FNR_MODULE_LEN+1
         beq wrapper_bad
         ; module pointer and exclusive source bound
+.ifdef SDX_CHILD
+        lda stage_header_ptr
+.else
         lda #<(STAGE+FNR_HEADER)
+.endif
         sta module_ptr
         sta src_ptr
+.ifdef SDX_CHILD
+        lda stage_header_ptr+1
+.else
         lda #>(STAGE+FNR_HEADER)
+.endif
         sta module_ptr+1
         sta src_ptr+1
         clc
@@ -288,10 +328,17 @@ wrapper_ok:
         rts
 
 calculate_ranges:
+.ifdef SDX_CHILD
+        lda $06a4
+        sta base_ptr
+        lda $06a5
+        sta base_ptr+1
+.else
         lda MEMLO
         sta base_ptr
         lda MEMLO+1
         sta base_ptr+1
+.endif
         lda base_ptr
         and #1
         beq :+
@@ -323,11 +370,19 @@ calculate_ranges:
         sta R_END+1
         ; Keep the dynamic resident image below this transient installer.
         lda target_end+1
+.ifdef SDX_CHILD
+        cmp loader_ptr+1
+.else
         cmp #>LOADER_START
+.endif
         bcc @after_loader
         bne @bad
         lda target_end
+.ifdef SDX_CHILD
+        cmp loader_ptr
+.else
         cmp #<LOADER_START
+.endif
         bne @bad
 @after_loader:
         jsr target_before_stack
@@ -1006,12 +1061,20 @@ publish_hatabs:
         sta HATABS+2,x
         lda #'N'
         sta HATABS,x
+.ifdef SDX_CHILD
+        ; Preserve the full extent reserved by MALLOC, including alignment.
+        lda MEMLO
+        sta R_NEW_MEMLO
+        lda MEMLO+1
+        sta R_NEW_MEMLO+1
+.else
         lda target_end
         sta MEMLO
         sta R_NEW_MEMLO
         lda target_end+1
         sta MEMLO+1
         sta R_NEW_MEMLO+1
+.endif
         stx R_HAT_OFFSET
         lda #OUT_INSTALLED
         sta R_OUTCOME
@@ -1121,6 +1184,8 @@ entry_sp:       .byte 0
 ; One private free IOCB, with its original contents restored on every exit.
 ; No filesystem parsing, decompression, banking or alternate relocator.
 disk_open_header:
+        ; The SDX child scratch is inside its loader-owned allocation.
+.ifndef SDX_CHILD
         ; Check all transient scratch against the measured live bounds.
         lda R_STACK_FLOOR+1
         cmp #$94                 ; RESULT ends at $93a8
@@ -1131,6 +1196,7 @@ disk_open_header:
         lda R_SAVMSC+1
         cmp #$94
         bcc disk_open_bad
+.endif
         ldx #$70
 @find: lda $0340,x
         cmp #$ff
@@ -1150,9 +1216,17 @@ disk_open_header:
         cpy #16
         bne @save
         ldx disk_iocb
+.ifdef SDX_CHILD
+        lda name_ptr
+.else
         lda #<disk_name
+.endif
         sta $0344,x
+.ifdef SDX_CHILD
+        lda name_ptr+1
+.else
         lda #>disk_name
+.endif
         sta $0345,x
         lda #4
         sta $034a,x
@@ -1162,9 +1236,17 @@ disk_open_header:
         jsr disk_cio
         bmi disk_open_bad
         ldx disk_iocb
+.ifdef SDX_CHILD
+        lda stage_ptr
+.else
         lda #<STAGE
+.endif
         sta $0344,x
+.ifdef SDX_CHILD
+        lda stage_ptr+1
+.else
         lda #>STAGE
+.endif
         sta $0345,x
         lda #48                 ; wrapper and fixed o65 header
         sta $0348,x
@@ -1201,9 +1283,17 @@ disk_read_byte:
         sta disk_count
 @refill:
         ldx disk_iocb
+.ifdef SDX_CHILD
+        lda buffer_ptr
+.else
         lda #<DISK_BUFFER
+.endif
         sta $0344,x
+.ifdef SDX_CHILD
+        lda buffer_ptr+1
+.else
         lda #>DISK_BUFFER
+.endif
         sta $0345,x
         lda disk_count
         sta $0348,x
@@ -1264,7 +1354,21 @@ disk_count:     .byte 0
 disk_status:    .byte 0
 disk_iocb_save: .res 16,0
 disk_zp_save:   .res CC65_ZP_SIZE,0
+.ifdef SDX_CHILD
+name_ptr:         .word disk_name
+stage_ptr:        .word STAGE
+stage_header_ptr: .word STAGE+FNR_HEADER
+buffer_ptr:       .word DISK_BUFFER
+loader_ptr:       .word LOADER_START
+stage_buf:        .res 48,0
+disk_buf:         .res 128,0
+result_buf:       .res 40,0
+.else
         .assert * <= STAGE, error, "disk installer overlaps header scratch"
+.endif
+
+.ifndef SDX_CHILD
         .segment "INIT"
         .word _main
+.endif
 .endif
