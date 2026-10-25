@@ -514,6 +514,8 @@ exchange:
         lda wire_hi
         bne wire_bad
         lda wire_len
+        cmp #6
+        bcc wire_bad
         cmp #PACKET_MAX+1
         bcs wire_bad
         lda packet
@@ -604,8 +606,7 @@ receive:
 @length:lda wire_hi
         bne @read
         lda packet+1
-        cmp #6
-        bcc wire_bad
+        beq wire_bad           ; zero length cannot be retired with R
 @read:  lda packet+1
         sta wire_len
         lda #'R'

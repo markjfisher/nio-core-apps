@@ -22,7 +22,7 @@ Current permanent footprint:
 
 | Component | Bytes |
 | --- | ---: |
-| Code | 1,420 |
+| Code | 1,422 |
 | Initialized CIO table and ownership marker | 20 |
 | Two owner records | 32 |
 | Two 128-byte caches | 256 |
@@ -30,9 +30,9 @@ Current permanent footprint:
 | Gateway and wire state | 23 |
 | Conservatively charged zero-page bank | 26 |
 | Dedicated stack | 0 |
-| **Total** | **2,289** |
+| **Total** | **2,291** |
 
-MEMLO advances by 2,263 bytes. The two used ZP bytes are borrowed/restored
+MEMLO advances by 2,265 bytes. The two used ZP bytes are borrowed/restored
 inside the foreground gateway; all 26 bytes declared to the existing loader
 are counted conservatively. JSR/PHA use the existing OS hardware stack only
 while a call runs and return at the original depth. The transient installer,
@@ -57,7 +57,9 @@ CLOSE attempts remote cleanup and always retires local ownership.
 One 512-byte buffer serves requests, responses and retained-response drains.
 Normal responses are bounded at 160 bytes; recovery can drain up to 512.
 After an uncertain W/P/R completion, later requests must first drain with P/R
-or observe idle. Recovery never repeats W. Waiting is bounded at 60 polls.
+or observe idle. Recovery never repeats W. Waiting is bounded at 60 polls. A nonempty short reply is drained, then
+rejected as an invalid packet; a zero-length ready reply remains outstanding
+because there is no data to retire with R.
 Wire device/command, length, checksum, service status, handle and byte-count
 checks prevent malformed responses from publishing data or advancing offsets.
 
