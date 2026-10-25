@@ -140,25 +140,28 @@ static uint8_t fnresident_find_free_owner(void)
     return FN_MAX_SESSIONS;
 }
 
-static uint8_t fnresident_validate_uri(const char *name, const char **uri)
+static uint8_t fnresident_validate_uri(const char *name, char *uri)
 {
     uint8_t length;
 
     /* CIO has already selected N:, but retain the exact supported N1: form
-     * as the handler contract.  Do not normalize, rewrite, or parse the URI;
-     * fn_open() receives precisely the suffix after the device prefix. */
+     * as the handler contract. CIO filenames end in ATASCII EOL; retain NUL
+     * support for native callers. Copy only the URI into a bounded C string,
+     * without modifying the caller's filename or interpreting its contents. */
     if (name[0] != 'N' || name[1] != '1' || name[2] != ':') {
         return FNR_CIO_INVALID_NAME;
     }
 
-    *uri = name + 3;
+    name += 3;
     length = 0;
-    while ((*uri)[length] != '\0') {
-        ++length;
-        if (length > FN_MAX_URL_LEN) {
+    while (name[length] != '\0' && (uint8_t)name[length] != 0x9bu) {
+        if (length == FN_MAX_URL_LEN) {
             return FNR_CIO_INVALID_NAME;
         }
+        uri[length] = name[length];
+        ++length;
     }
+    uri[length] = '\0';
 
     return length == 0 ? FNR_CIO_INVALID_NAME : FNR_CIO_SUCCESS;
 }
@@ -170,7 +173,7 @@ uint8_t fnresident_gateway_open(void)
 {
     volatile uint8_t *iocb;
     const char *name;
-    const char *uri;
+    char uri[FN_MAX_URL_LEN + 1u];
     fn_handle_t handle;
     uint8_t owner;
     uint8_t result;
@@ -200,7 +203,7 @@ uint8_t fnresident_gateway_open(void)
     if (name == 0) {
         return FNR_CIO_INVALID_NAME;
     }
-    result = fnresident_validate_uri(name, &uri);
+    result = fnresident_validate_uri(name, uri);
     if (result != FNR_CIO_SUCCESS) {
         return result;
     }
