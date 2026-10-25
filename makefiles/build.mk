@@ -89,52 +89,23 @@ $(OBJ_DIR)/%.o: %.c | $(OBJ_DIR)
 	$(call compile_c)
 
 FNACCEPT_COMMON_OBJS := $(COMMON_OBJS)
-FNRESIDENT_COMMON_OBJS := $(COMMON_OBJS)
 ifeq ($(TARGET),atari)
 # fnaccept exercises only the published fujinet-nio-lib API.  Do not link the
 # interactive app-control/directory-service helpers into its constrained Atari
 # acceptance image.  Other targets retain the normal common-object link.
 FNACCEPT_COMMON_OBJS :=
-# fnresident is likewise a self-contained public-library image.  Linking
-# fnsvc/fnctl would reserve unrelated application state in the resident range.
-FNRESIDENT_COMMON_OBJS :=
 endif
 
 define APP_PROGRAM_RULE
-$(BIN_DIR)/$(1)$(PROGRAM_EXT): $(OBJ_DIR)/$$(patsubst %.c,%.o,$$(filter %/$(1).c,$$(APP_SRCS))) $$(if $$(filter fnaccept,$(1)),$$(FNACCEPT_COMMON_OBJS),$$(if $$(filter fnresident,$(1)),$$(FNRESIDENT_COMMON_OBJS),$$(COMMON_OBJS))) $$(NIO_LIB_FILE) | $(BIN_DIR)
+$(BIN_DIR)/$(1)$(PROGRAM_EXT): $(OBJ_DIR)/$$(patsubst %.c,%.o,$$(filter %/$(1).c,$$(APP_SRCS))) $$(if $$(filter fnaccept,$(1)),$$(FNACCEPT_COMMON_OBJS),$$(COMMON_OBJS)) $$(NIO_LIB_FILE) | $(BIN_DIR)
 	$$(call link_program)
 endef
 
 $(foreach prog,$(PROGRAMS),$(eval $(call APP_PROGRAM_RULE,$(prog))))
 
 ifeq ($(TARGET),atari)
-# fnresident is a deliberately resident CIO image.  Keep its handler table in
-# the same linked image as fn_init() and all of the library state it reaches;
-# the map/runtime gate then reserves that whole image through MEMLO.
-FNRESIDENT_HANDLER_SRC := $(PLATFORM_APP_DIR)/fnresident_handler.s
-FNRESIDENT_HANDLER_OBJ := $(OBJ_DIR)/$(FNRESIDENT_HANDLER_SRC:.s=.o)
-
-$(FNRESIDENT_HANDLER_OBJ): $(FNRESIDENT_HANDLER_SRC) | $(OBJ_DIR)
-	@mkdir -p $(dir $@)
-	$(CC) -t $(TARGET) -c $(CFLAGS) -o $@ $<
-
-$(BIN_DIR)/fnresident$(PROGRAM_EXT): $(FNRESIDENT_HANDLER_OBJ)
-$(BIN_DIR)/fnresident$(PROGRAM_EXT): ATARI_START_ADDRESS = 0x1D00
-$(BIN_DIR)/fnresident$(PROGRAM_EXT): ATARI_LINK_CONFIG = makefiles/cc65-atari-resident.cfg
-
-# The normal fnresident XEX remains the fixed-image regression scaffold.  The
-# original C prototype remains a separate crt0-free o65 functional reference.
-# It retains the public Atari archive closure for equivalence regressions.
-# Production MyDOS installation uses the CA65-only fnresident-asm target.
+# Production MyDOS installation uses the CA65-only resident module.
 FNRESIDENT_MODULE_DIR := $(PLATFORM_APP_DIR)/resident
-FNRESIDENT_MODULE_C := $(FNRESIDENT_MODULE_DIR)/fnresident_module.c
-FNRESIDENT_MODULE_S := $(FNRESIDENT_MODULE_DIR)/fnresident_module_handler.s
-FNRESIDENT_MODULE_C_OBJ := $(OBJ_DIR)/$(FNRESIDENT_MODULE_C:.c=.o)
-FNRESIDENT_MODULE_S_OBJ := $(OBJ_DIR)/$(FNRESIDENT_MODULE_S:.s=.o)
-FNRESIDENT_MODULE := $(BIN_DIR)/fnresident-module.o65
-
-.PHONY: fnresident-module
-fnresident-module: $(FNRESIDENT_MODULE)
 
 # Production image: exactly one CA65 object, no C/runtime/archive inputs.
 .PHONY: fnresident-asm
@@ -145,17 +116,7 @@ $(BIN_DIR)/fnresident-asm.o65: $(FNRESIDENT_MODULE_DIR)/fnresident_asm.s | $(BIN
 	ca65 -o $(BIN_DIR)/fnresident-asm.o $<
 	ld65 -C ../cc65/cfg/module.cfg -o $@ -m $(basename $@).map -Ln $(basename $@).lbl $(BIN_DIR)/fnresident-asm.o
 
-$(FNRESIDENT_MODULE_C_OBJ): $(FNRESIDENT_MODULE_C) | $(OBJ_DIR)
-	@mkdir -p $(dir $@)
-	$(call compile_c)
 
-$(FNRESIDENT_MODULE_S_OBJ): $(FNRESIDENT_MODULE_S) | $(OBJ_DIR)
-	@mkdir -p $(dir $@)
-	$(CC) -t $(TARGET) -c $(CFLAGS) -o $@ $<
-
-$(FNRESIDENT_MODULE): $(FNRESIDENT_MODULE_C_OBJ) $(FNRESIDENT_MODULE_S_OBJ) $(NIO_LIB_FILE) | $(BIN_DIR)
-	ld65 -C ../cc65/cfg/module.cfg -o $@ -m $(basename $@).map -Ln $(basename $@).lbl \
-		$(FNRESIDENT_MODULE_S_OBJ) $(FNRESIDENT_MODULE_C_OBJ) $(NIO_LIB_FILE) $(CC65_HOME)/lib/atari.lib
 endif
 
 # The public-API acceptance XEX pulls the bounded DiskDevice client in

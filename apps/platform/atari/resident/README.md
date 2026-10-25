@@ -2,8 +2,8 @@
 
 `fnresident_asm.s` is the production resident: one hand-written CA65 object,
 linked by LD65 as relocatable o65. It links no C, library archive, runtime,
-heap, software stack or external resident workspace. The C module and its
-assembly gateway remain the functional reference (`fnresident-module`).
+heap, software stack or external resident workspace. It is the sole maintained
+resident implementation.
 
 Build from the workspace after sourcing `scripts/env.sh`:
 
@@ -36,9 +36,7 @@ MEMLO advances by 2,334 bytes. The two used ZP bytes are borrowed/restored
 inside the foreground gateway; all 26 bytes declared to the existing loader
 are counted conservatively. JSR/PHA use the existing OS hardware stack only
 while a call runs and return at the original depth. The transient installer,
-source file and relocation records are not retained. The reference C image
-requires 14,244 bytes including its 256-byte software stack and 26-byte ZP
-bank.
+source file and relocation records are not retained. The retired C prototype is available in history.
 
 The Atari owns CIO dispatch and errors, two IOCB owners, handles, 32-bit
 stream offsets, byte buffering, EOF, and the terminal write commit. Firmware
