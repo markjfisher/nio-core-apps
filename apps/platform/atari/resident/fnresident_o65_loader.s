@@ -14,7 +14,17 @@ MEMLO           = $02E7
 SDLSTL          = $0230
 SAVMSC          = $0058
 
+.ifdef DISK_SOURCE
+; MyDOS loads only this transient code. The unchanged FNR1/o65 file is
+; consumed through CIO after ownership has been resolved. Every byte loaded
+; by DOS is above the maximum resident end, including on repeat installs.
+LOADER_START    = $6000
+STAGE           = $6e00          ; FNR1 + fixed o65 header only (48 bytes)
+DISK_BUFFER     = $6f00          ; 128-byte sequential read buffer
+.else
 LOADER_START    = $3f00
+STAGE           = $4900
+.endif
 ; The staged o65 image may occupy $4900..$9290.  Keep diagnostics
 ; above that fixed staging window: writing a result into the staged module
 ; while parsing it corrupts subsequent TEXT/DATA and relocation records.
@@ -22,7 +32,6 @@ RESULT          = $9380          ; transient inspection only, never reserved
 ; The GET/CLOSE public closure is larger than the initial OPEN-only image.
 ; Keep the source below the live C-stack floor while leaving the $3f00 loader,
 ; $48e0 launcher, and $46a0 probe regions untouched.
-STAGE           = $4900
 FNR_HEADER      = 22
 CC65_ZP         = $0082
 CC65_ZP_SIZE    = 26
@@ -94,8 +103,18 @@ reloc_value       = $9A
 .segment "CODE"
 
 _main:
+        tsx
+        stx entry_sp
         jsr save_caller_zp
         jsr init_result
+.ifdef DISK_SOURCE
+        lda #$ff
+        sta disk_iocb
+        jsr disk_open_header
+        bcc :+
+        jmp fail_format
+:
+.endif
         jsr validate_wrapper
         bcc :+
         jmp fail_format
@@ -127,7 +146,14 @@ _main:
         jmp finish
 
 finish:
+.ifdef DISK_SOURCE
+        jsr disk_close
+.endif
         jsr restore_caller_zp
+        ; read_byte can abort from any parser depth. Return to the original
+        ; caller, never into a partially failed copy/relocation loop.
+        ldx entry_sp
+        txs
         rts
 
 ; -------------------------------------------------------------------------
@@ -220,6 +246,10 @@ validate_wrapper:
         adc FNR_MODULE_LEN+1
         sta module_end+1
         bcs wrapper_bad
+.ifdef DISK_SOURCE
+        ; src_ptr/module_end are logical stream positions, not RAM addresses.
+        jmp wrapper_ok
+.else
         ; Reject stage wrapping and a stage that reaches the live C stack.
         lda module_end+1
         cmp R_STACK_FLOOR+1
@@ -228,6 +258,7 @@ validate_wrapper:
         lda module_end
         cmp R_STACK_FLOOR
         bcc wrapper_ok
+.endif
 wrapper_bad:
         sec
         rts
@@ -256,6 +287,7 @@ calculate_ranges:
         sta R_START+1
         adc FNR_ALLOC+1
         sta target_end+1
+        bcs @bad
         clc
         lda target_end
         adc FNR_CSTACK
@@ -314,8 +346,7 @@ target_before_stack:
 
 ; -------------------------------------------------------------------------
 ; HATABS ownership is checked before destination memory is touched.  The
-; fixed stage is safe for any payload previously installed by this bounded
-; loader because its target is capped below $3800.
+; transient source/code is above the resident ceiling in both build modes.
 
 scan_hatabs:
         ldx #0
@@ -692,7 +723,11 @@ read_byte:
         sta R_DETAIL
         jmp fail_format
 @read: ldy #0
+.ifdef DISK_SOURCE
+        jsr disk_read_byte
+.else
         lda (src_ptr),y
+.endif
         pha                     ; retain the byte's N/Z flags for callers
         inc src_ptr
         bne :+
@@ -1059,3 +1094,156 @@ init_status:    .byte 0
 zp_save:        .repeat CC65_ZP_SIZE
                 .byte 0
                 .endrepeat
+entry_sp:       .byte 0
+
+.ifdef DISK_SOURCE
+; One private free IOCB, with its original contents restored on every exit.
+; No filesystem parsing, decompression, banking or alternate relocator.
+disk_open_header:
+        ; Check all transient scratch against the measured live bounds.
+        lda R_STACK_FLOOR+1
+        cmp #$94                 ; RESULT ends at $93a8
+        bcc disk_open_bad
+        lda R_SDLSTL+1
+        cmp #$94
+        bcc disk_open_bad
+        lda R_SAVMSC+1
+        cmp #$94
+        bcc disk_open_bad
+        ldx #$70
+@find: lda $0340,x
+        cmp #$ff
+        beq @free
+        txa
+        sec
+        sbc #$10
+        tax
+        bne @find
+        jmp disk_open_bad
+@free: stx disk_iocb
+        ldy #0
+@save: lda $0340,x
+        sta disk_iocb_save,y
+        inx
+        iny
+        cpy #16
+        bne @save
+        ldx disk_iocb
+        lda #<disk_name
+        sta $0344,x
+        lda #>disk_name
+        sta $0345,x
+        lda #4
+        sta $034a,x
+        lda #0
+        sta $034b,x
+        lda #3                  ; OPEN D1:NIO.O65, read only
+        jsr disk_cio
+        bmi disk_open_bad
+        ldx disk_iocb
+        lda #<STAGE
+        sta $0344,x
+        lda #>STAGE
+        sta $0345,x
+        lda #48                 ; wrapper and fixed o65 header
+        sta $0348,x
+        lda #0
+        sta $0349,x
+        sta disk_count
+        sta disk_index
+        lda #7                  ; GET CHARACTERS, exact length
+        jsr disk_cio
+        bmi disk_open_bad
+        clc
+        rts
+disk_open_bad:
+        sec
+        rts
+
+disk_read_byte:
+        ldx disk_index
+        cpx disk_count
+        bne @get
+        ; Request min(128, remaining) so the last read cannot require bytes
+        ; past the declared module. An early EOF or any disk error is fatal.
+        sec
+        lda module_end
+        sbc src_ptr
+        sta disk_count
+        lda module_end+1
+        sbc src_ptr+1
+        bne @full
+        lda disk_count
+        cmp #128
+        bcc @refill
+@full: lda #128
+        sta disk_count
+@refill:
+        ldx disk_iocb
+        lda #<DISK_BUFFER
+        sta $0344,x
+        lda #>DISK_BUFFER
+        sta $0345,x
+        lda disk_count
+        sta $0348,x
+        lda #0
+        sta $0349,x
+        sta disk_index
+        lda #7
+        jsr disk_cio
+        bpl :+
+        jmp fail_format
+:       ldx #0
+@get:  lda DISK_BUFFER,x
+        inc disk_index
+        rts
+
+disk_close:
+        lda disk_iocb
+        bmi @done
+        lda #12
+        jsr disk_cio
+        ldx disk_iocb
+        ldy #0
+@restore:
+        lda disk_iocb_save,y
+        sta $0340,x
+        inx
+        iny
+        cpy #16
+        bne @restore
+        lda #$ff
+        sta disk_iocb
+@done: rts
+
+disk_cio:
+        ldx disk_iocb
+        sta $0342,x
+        ; DOS may use the cc65 bank too. Preserve parser pointers around CIO.
+        ldy #CC65_ZP_SIZE-1
+@save: lda CC65_ZP,y
+        sta disk_zp_save,y
+        dey
+        bpl @save
+        jsr $e456
+        sty disk_status
+        ldy #CC65_ZP_SIZE-1
+@restore:
+        lda disk_zp_save,y
+        sta CC65_ZP,y
+        dey
+        bpl @restore
+        ldy disk_status
+        rts
+
+disk_name:      .byte "D1:NIO.O65",$9b
+disk_iocb:      .byte $ff
+disk_index:     .byte 0
+disk_count:     .byte 0
+disk_status:    .byte 0
+disk_iocb_save: .res 16,0
+disk_zp_save:   .res CC65_ZP_SIZE,0
+        .assert * <= STAGE, error, "disk installer overlaps header scratch"
+        .segment "INIT"
+        .word _main
+.endif
