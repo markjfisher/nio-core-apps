@@ -21,6 +21,7 @@ POS=9
 EOF=10
 FAULT=11
 COMMITTED=12
+READING=13
 PACKET_MAX=160
         .segment "CODE"
 _fnresident_module_entry:
@@ -115,6 +116,8 @@ do_open:
         cmp #4
         beq :+
         cmp #8
+        beq :+
+        cmp #12
         bne unsupported
 :       sta open_mode
         ldx #16
@@ -167,10 +170,19 @@ do_open:
         adc #19
         sta request_len
         lda open_mode
-        lsr
-        sec
-        sbc #1                  ; GET=1, PUT=3
-        sta packet+7
+        cmp #4
+        beq @get_method
+        lda #4                  ; unknown-length POST/PUT body
+        sta packet+8
+        lda #3                  ; PUT
+        ldx open_mode
+        cpx #8
+        beq @method
+        lda #2                  ; update is POST
+        bne @method
+@get_method:
+        lda #1
+@method:sta packet+7
         jsr exchange
         jcs io_error
         lda payload_len
@@ -272,7 +284,24 @@ add_offset:
 do_get:
         lda owners+MODE,x
         cmp #4
+        beq @read
+        cmp #12
         jne unsupported
+        lda owners+READING,x
+        bne @read
+        jsr finish_write        ; commit POST before reading response
+        cmp #1
+        jne io_error
+        lda #0
+        sta owners+OFFSET,x
+        sta owners+OFFSET+1,x
+        sta owners+OFFSET+2,x
+        sta owners+OFFSET+3,x
+        sta owners+LEN,x
+        sta owners+POS,x
+        sta owners+EOF,x
+        inc owners+READING,x
+@read:
         lda owners+POS,x
         cmp owners+LEN,x
         jcc @cached
@@ -331,8 +360,8 @@ eof:    lda #$88
         rts
 do_put:
         lda owners+MODE,x
-        cmp #8
-        jne unsupported
+        cmp #4
+        jeq unsupported
         lda owners+FAULT,x
         ora owners+COMMITTED,x
         jne io_error
@@ -426,8 +455,8 @@ finish_write:
 @return:rts
 do_status:
         lda owners+MODE,x
-        cmp #8
-        bne @info
+        cmp #4
+        beq @info
         jsr finish_write
         cmp #1
         bne @return
@@ -438,8 +467,8 @@ do_status:
         jcs io_error
         ldx slot
         lda owners+MODE,x
-        cmp #4
-        jne success
+        cmp #8
+        jeq success
         lda owners+EOF,x
         jeq success
         lda owners+POS,x
@@ -451,8 +480,8 @@ do_close:
         lda #1
         sta close_result
         lda owners+MODE,x
-        cmp #8
-        bne @close
+        cmp #4
+        beq @close
         jsr finish_write
         sta close_result
 @close: lda #4

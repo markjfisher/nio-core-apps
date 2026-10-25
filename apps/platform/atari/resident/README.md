@@ -22,7 +22,7 @@ Current permanent footprint:
 
 | Component | Bytes |
 | --- | ---: |
-| Code | 1,422 |
+| Code | 1,491 |
 | Initialized CIO table and ownership marker | 20 |
 | Two owner records | 32 |
 | Two 128-byte caches | 256 |
@@ -30,9 +30,9 @@ Current permanent footprint:
 | Gateway and wire state | 23 |
 | Conservatively charged zero-page bank | 26 |
 | Dedicated stack | 0 |
-| **Total** | **2,291** |
+| **Total** | **2,360** |
 
-MEMLO advances by 2,265 bytes. The two used ZP bytes are borrowed/restored
+MEMLO advances by 2,334 bytes. The two used ZP bytes are borrowed/restored
 inside the foreground gateway; all 26 bytes declared to the existing loader
 are counted conservatively. JSR/PHA use the existing OS hardware stack only
 while a call runs and return at the original depth. The transient installer,
@@ -46,9 +46,12 @@ continues to own URI routing and networking. Requests use the existing `$7f`
 W/P/R transport and NetworkDevice OPEN/READ/WRITE/CLOSE/INFO commands. No
 firmware adaptation or public API change is needed.
 
-OPEN accepts `N1:` input mode 4 or output mode 8 and up to 128 URI bytes.
+OPEN accepts `N1:` input mode 4 (GET), output mode 8 (PUT), or update
+mode 12 (POST), and up to 128 URI bytes. Both output methods set the
+unknown-body flag.
 Each owner has a 128-byte cache. A full output cache flushes immediately;
-STATUS/CLOSE flush a partial cache and send exactly one zero-length commit.
+STATUS/CLOSE and the first POST response read flush a partial cache and send
+exactly one zero-length commit. POST response reads start at offset zero.
 Repeated STATUS and CLOSE never repeat that commit. A valid short write
 acknowledgement advances the offset and sends only the remaining suffix.
 An uncertain exchange faults the output owner: no body or commit replay.
