@@ -1,7 +1,13 @@
 # Paths support shell-style environment expansion (${VAR}) and ~.
 # Relative paths are resolved from the nio-core-apps repository root.
 
+# PicoBoot runs the first file in the disk directory, and dir2atr sorts the directory
+# by name, so the program that should start at boot is staged as autorun.xex (it sorts
+# before every F* tool). ftestnio is the hardware bring-up screen; swap the src below
+# for another program to change what the disk boots.
 apps:
+  - src: ${BOOT_DISK_BIN}/ftestnio.xex
+    name: autorun.xex
   - src: ${BOOT_DISK_BIN}/fhost.xex
     name: fhost.xex
   - src: ${BOOT_DISK_BIN}/fls.xex

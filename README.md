@@ -13,6 +13,7 @@ utilities:
 - `fls`
 - `fmount`
 - `fout`
+- `ftestnio` (Atari only): a two-screen hardware test; every line is a real call to the FujiNet
 
 Supported standalone targets are `msdos`, `atari`, `linux`, and `amiga`.
 
@@ -23,6 +24,9 @@ make TARGET=linux FUJINET_NIO_LIB=../fujinet-nio-lib
 make amiga                         # builds wb13, wb31, and wb32
 make amiga AMIGA_PROFILE=wb13      # one explicit profile
 ```
+
+The Atari boot disk starts `ftestnio`, staged as `autorun.xex`: PicoBoot runs the first directory
+entry and `dir2atr` sorts by name (see `boot-disk/manifests/atari.yaml`).
 
 Boot disks are repo-owned:
 
