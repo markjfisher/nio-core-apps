@@ -54,6 +54,11 @@ static void report_fnsvc(const char *name, int success)
   report(name, success ? FN_OK : (uint8_t) (fnsvc_last_status() ? fnsvc_last_status() : FN_ERR_IO));
 }
 
+/* cc65 maps the literal '\n' to the ATASCII end of line ($9B), but the FujiNet's text uses a
+ * real line feed. Compare against the byte values, or the line feed prints as a graphic. */
+#define LF 0x0a
+#define CR 0x0d
+
 /* Print at most `max_lines` lines of `text`, each cut to the screen width. */
 static void print_lines(const char *text, uint8_t max_lines)
 {
@@ -63,7 +68,7 @@ static void print_lines(const char *text, uint8_t max_lines)
     unsigned used = 0;
 
     fputs("  ", stdout);
-    while (*text && *text != '\n' && *text != '\r') {
+    while (*text && *text != LF && *text != CR) {
       if (used < COLUMNS - 2u) {
         putchar(*text);
         ++used;
@@ -71,7 +76,7 @@ static void print_lines(const char *text, uint8_t max_lines)
       ++text;
     }
     putchar('\n');
-    while (*text == '\n' || *text == '\r')
+    while (*text == LF || *text == CR)
       ++text;
     ++shown;
   }
@@ -110,6 +115,8 @@ static void dir_entry(uint8_t is_dir, const char *name, uint32_t size,
 static void page_device(uint8_t init_status)
 {
   uint8_t status;
+  uint8_t flags;
+  uint16_t payload;
 
   clrscr();
   puts("FTESTNIO - FujiNet-NIO self test");
@@ -119,9 +126,13 @@ static void page_device(uint8_t init_status)
 
   status = fn_atari_query_capabilities();
   report("query", status);
-  if (status == FN_OK)
-    printf("  payload %u bytes, flags $%02x\n", (unsigned) fn_atari_max_payload(),
-           (unsigned) fn_atari_capability_flags());
+  if (status == FN_OK) {
+    /* Keep each in its own variable: printing a uint8_t call result directly can show the
+     * previous call's high byte (cc65 leaves X unchanged), e.g. flags $200. */
+    payload = fn_atari_max_payload();
+    flags = fn_atari_capability_flags();
+    printf("  payload %u bytes, flags $%02x\n", (unsigned) payload, (unsigned) flags);
+  }
 
   status = fn_fuji_get_info(&fuji_info);
   report("device", status);
@@ -155,6 +166,7 @@ static void page_storage(void)
   uint16_t length = 0;
   uint8_t status;
   uint8_t i;
+  uint8_t sio_status;
   dir_ctx_t dir;
 
   clrscr();
@@ -190,7 +202,8 @@ static void page_storage(void)
 
   puts("");
   printf("%u ok, %u failed", (unsigned) steps_ok, (unsigned) steps_failed);
-  printf("   last SIO $%02x\n", (unsigned) fn_atari_last_sio_status());
+  sio_status = fn_atari_last_sio_status();
+  printf("   last SIO $%02x\n", (unsigned) sio_status);
 }
 
 int main(void)
