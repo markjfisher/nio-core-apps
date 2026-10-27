@@ -294,6 +294,10 @@ static void page_bench(void)
   uint32_t bytes = 0;
   uint8_t rate = (get_tv() == AT_PAL) ? 50u : 60u;
 
+  if (fn_atari_hsio_index() != 0xFFu) {
+    fn_atari_hsio_disable();
+    (void) fn_atari_hsio_enable();
+  }
   clrscr();
   puts("FTESTNIO - native read benchmark");
   puts("");
@@ -395,6 +399,11 @@ static void page_timing(void)
   uint32_t tenths;
   uint8_t rate = (get_tv() == AT_PAL) ? 50u : 60u;
 
+  /* The driver's error counts add up across runs; turning it off and on again zeroes them. */
+  if (fn_atari_hsio_index() != 0xFFu) {
+    fn_atari_hsio_disable();
+    (void) fn_atari_hsio_enable();
+  }
   clrscr();
   printf("FTESTNIO - call timing, hs %s\n\n", fn_atari_hsio_index() == 0xFFu ? "off" : "on");
   for (k = 0; k < sizeof(timings) / sizeof(timings[0]); ++k) {
