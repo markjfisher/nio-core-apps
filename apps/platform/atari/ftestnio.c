@@ -6,10 +6,13 @@
  * disks, a sector read and a directory listing. A failing step prints its
  * FujiNet status code (FN_ERR_* in fujinet-nio.h) instead of stopping the run.
  *
- * Two pages, each ending on a key press (cgetc). It is built as ftestnio.xex and
- * staged on the boot disk as AUTORUN.XEX, which PicoBoot runs.
+ * Two pages, each ending on a key press (cgetc), then a small menu: P sends raw SIO commands to a
+ * few device IDs (what an SIO speed driver does about each, see sio.status on the FujiNet), B reads
+ * a run of sectors through the native endpoint and shows the time taken. It is built as ftestnio.xex
+ * and staged on the boot disk as AUTORUN.XEX, which PicoBoot runs.
  */
 
+#include <atari.h>
 #include <conio.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -206,6 +209,95 @@ static void page_storage(void)
   printf("   last SIO $%02x\n", (unsigned) sio_status);
 }
 
+/* Calls the OS SIO entry with the DCB the caller filled in. */
+static void sio_call(void)
+{
+  __asm__("jsr $E459");
+}
+
+typedef struct {
+  uint8_t device;
+  uint8_t unit;
+  uint8_t command;
+  uint8_t read_bytes;
+  const char *what;
+} probe_t;
+
+/* Raw SIO commands, one per device ID. The FujiNet ignores the ones it does not serve, so those end
+ * in a timeout; what matters is which frames reach it (sio.status: first frames for other devices)
+ * and at what speed. D1: and 0x7f are the controls. */
+static const probe_t probes[] = {
+  { 0x31, 1, 'S', 4, "D1: status" },
+  { 0x7f, 1, 'Q', 4, "0x7f query" },
+  { 0x71, 1, 'S', 4, "0x71 u1 (NOS N1:)" },
+  { 0x72, 1, 'S', 4, "0x72 u1 (N2:)" },
+  { 0x70, 1, 'S', 4, "0x70 u1 (config)" }
+};
+
+static void page_probe(void)
+{
+  uint8_t i;
+
+  clrscr();
+  puts("FTESTNIO - SIO probe (about 3 s each)");
+  puts("");
+  for (i = 0; i < sizeof(probes) / sizeof(probes[0]); ++i) {
+    memset(sector, 0, 8);
+    OS.dcb.ddevic = probes[i].device;
+    OS.dcb.dunit = probes[i].unit;
+    OS.dcb.dcomnd = probes[i].command;
+    OS.dcb.dstats = 0x40;
+    OS.dcb.dbuf = sector;
+    OS.dcb.dtimlo = 3;
+    OS.dcb.dunuse = 0;
+    OS.dcb.dbyt = probes[i].read_bytes;
+    OS.dcb.daux = 0;
+    sio_call();
+    printf("%-18s -> $%02x\n", probes[i].what, (unsigned) OS.dcb.dstats);
+  }
+  puts("");
+  puts("now: sio.status on the FujiNet");
+}
+
+#define BENCH_READS 100u
+
+/* Reads BENCH_READS sectors of the boot disk through the native endpoint and times it with the OS
+ * clock (a jiffy is 1/50 s on PAL, 1/60 on NTSC). */
+static void page_bench(void)
+{
+  uint16_t i;
+  uint16_t length = 0;
+  uint16_t start;
+  uint16_t end;
+  uint16_t ticks;
+  uint16_t failed = 0;
+  uint32_t bytes = 0;
+  uint8_t rate = (get_tv() == AT_PAL) ? 50u : 60u;
+
+  clrscr();
+  puts("FTESTNIO - native read benchmark");
+  puts("");
+  printf("reading %u sectors...\n", BENCH_READS);
+  start = ((uint16_t) OS.rtclok[1] << 8) | OS.rtclok[2];
+  for (i = 0; i < BENCH_READS; ++i) {
+    if (fn_disk_read_sector(BOOT_SLOT, i, sector, sizeof(sector), &length) == FN_OK)
+      bytes += length;
+    else
+      ++failed;
+  }
+  end = ((uint16_t) OS.rtclok[1] << 8) | OS.rtclok[2];
+  ticks = end - start;
+  printf("%lu bytes, %u failed\n", (unsigned long) bytes, (unsigned) failed);
+  printf("%u jiffies (%u/s)\n", (unsigned) ticks, (unsigned) rate);
+  if (ticks) {
+    printf("%lu ms, %lu bytes/s\n", (unsigned long) ticks * 1000ul / rate,
+           (unsigned long) bytes * rate / ticks);
+    printf("%lu ms per read\n", (unsigned long) ticks * 1000ul / rate / BENCH_READS);
+  }
+  puts("");
+  puts("now: sio.status on the FujiNet");
+}
+
 int main(void)
 {
   uint8_t status = fn_init();
@@ -224,7 +316,19 @@ int main(void)
   wait_for_key("Press a key for disks and files");
 
   page_storage();
-  wait_for_key("Press a key to finish");
+  for (;;) {
+    char key;
+
+    puts("");
+    puts("P probe  B bench  other: finish");
+    key = cgetc();
+    if (key == 'p' || key == 'P')
+      page_probe();
+    else if (key == 'b' || key == 'B')
+      page_bench();
+    else
+      break;
+  }
 
   return steps_failed ? 2 : 0;
 }

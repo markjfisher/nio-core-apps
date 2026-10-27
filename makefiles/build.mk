@@ -124,6 +124,14 @@ endif
 # shared transport state without moving ordinary utilities or their links.
 ifeq ($(TARGET),atari)
 $(BIN_DIR)/fnaccept$(PROGRAM_EXT): ATARI_START_ADDRESS = 0x0D00
+
+# ftestnio is what the boot disk starts, and it must run with BASIC enabled as well as without. BASIC
+# ROM covers $A000-$BFFF and the OS then puts the screen and MEMTOP at $9C1F, so the program, its
+# BSS and the 2 KB C stack all have to fit below $9C20. Starting at $0D00 (nothing resident is below
+# it on a PicoBoot disk, as for fnaccept) instead of the DOS-friendly $2400 gives it the room, and
+# the link fails if it ever outgrows it.
+$(BIN_DIR)/ftestnio$(PROGRAM_EXT): ATARI_START_ADDRESS = 0x0D00
+$(BIN_DIR)/ftestnio$(PROGRAM_EXT): EXTRA_PROGRAM_LDFLAGS += -Wl -D,__TOP__=0x9C20
 endif
 
 $(OBJ_DIR):
