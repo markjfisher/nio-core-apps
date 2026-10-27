@@ -282,6 +282,52 @@ static void page_hsio(void)
   }
 }
 
+/* The U1MB's HSIO tables, which its author described (undocumented): the PBI ROM that is selected by
+ * writing its ID bit to $D1FF shows "S3", "IC" or "XU" at $D800. $D174+n holds disk n+1's speed entry
+ * (0 = never polled, else the divisor plus 1), and $D184..$D187 / $D188..$D18B hold up to four
+ * non-disk device IDs and their entries. Read it after native calls that went through the OS SIO
+ * (high speed off) to see whether the U1MB ever polled $7F. */
+#define U1MB_DISKS   15u
+#define U1MB_DEVICES 4u
+#define U1MB_TABLE   0xD174u   /* disks, then (at +16) the device IDs, then (at +20) their entries */
+
+static void show_pair(uint8_t a, uint8_t b)
+{
+  printf(" %02x:%02x", (unsigned) a, (unsigned) b);
+}
+
+static void page_u1mb(void)
+{
+  static uint8_t table[U1MB_DISKS + 1 + U1MB_DEVICES * 2];
+  uint8_t select;
+  uint8_t found = 0;
+  uint8_t i;
+
+  for (select = 0x80; select != 0 && !found; select >>= 1) {
+    *(volatile uint8_t *) 0xD1FF = select;
+    if (*(volatile uint8_t *) 0xD800 == 'X' && *(volatile uint8_t *) 0xD801 == 'U') {
+      for (i = 0; i < sizeof(table); ++i)
+        table[i] = *(volatile uint8_t *) (U1MB_TABLE + i);
+      found = select;
+    }
+  }
+  *(volatile uint8_t *) 0xD1FF = 0;
+
+  clrscr();
+  if (!found) {
+    puts("no U1MB PBI ROM found");
+    return;
+  }
+  printf("U1MB HSIO tables, PBI $%02x\n\ndisk:entry (0 = not polled)\n", (unsigned) found);
+  for (i = 0; i < U1MB_DISKS; ++i)
+    if (table[i])
+      show_pair(i + 1, table[i]);
+  puts("\n\ndevice:entry");
+  for (i = 0; i < U1MB_DEVICES; ++i)
+    show_pair(table[16 + i], table[20 + i]);
+  puts("");
+}
+
 /* The driver's error counts add up across runs; turning it off and on again zeroes them. */
 static void hsio_zero_counts(void)
 {
@@ -452,7 +498,7 @@ int main(void)
 
     puts("");
     printf("P probe  B bench  T timing  H high speed (%s)\n", fn_atari_hsio_index() == 0xFFu ? "off" : "on");
-    puts("other: finish");
+    puts("U U1MB tables  other: finish");
     key = cgetc();
     if (key == 'p' || key == 'P')
       page_probe();
@@ -462,6 +508,8 @@ int main(void)
       page_timing();
     else if (key == 'h' || key == 'H')
       page_hsio();
+    else if (key == 'u' || key == 'U')
+      page_u1mb();
     else
       break;
   }
