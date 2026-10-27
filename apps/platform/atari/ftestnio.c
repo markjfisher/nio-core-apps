@@ -296,36 +296,40 @@ static void show_pair(uint8_t a, uint8_t b)
   printf(" %02x:%02x", (unsigned) a, (unsigned) b);
 }
 
+/* The PBI ROMs tell themselves apart by two characters at $D800. */
 static void page_u1mb(void)
 {
   static uint8_t table[U1MB_DISKS + 1 + U1MB_DEVICES * 2];
-  uint8_t select;
-  uint8_t found = 0;
   uint8_t i;
+  uint8_t sel = 0;
+  uint8_t *sigs = table; /* the signatures seen, until a ROM is found and its tables replace them */
 
-  for (select = 0x80; select != 0 && !found; select >>= 1) {
-    *(volatile uint8_t *) 0xD1FF = select;
-    if (*(volatile uint8_t *) 0xD800 == 'X' && *(volatile uint8_t *) 0xD801 == 'U') {
-      for (i = 0; i < sizeof(table); ++i)
-        table[i] = *(volatile uint8_t *) (U1MB_TABLE + i);
-      found = select;
+  for (i = 0; i < 8 && !sel; ++i) {
+    *(volatile uint8_t *) 0xD1FF = 0x80 >> i;
+    sigs[i * 2] = *(volatile uint8_t *) 0xD800;
+    sigs[i * 2 + 1] = *(volatile uint8_t *) 0xD801;
+    if ((sigs[i * 2] == 'X' && sigs[i * 2 + 1] == 'U') || (sigs[i * 2] == 'I' && sigs[i * 2 + 1] == 'C') ||
+        (sigs[i * 2] == 'S' && sigs[i * 2 + 1] == '3')) {
+      memcpy(table, (const void *) U1MB_TABLE, sizeof(table));
+      sel = 0x80 >> i;
     }
   }
   *(volatile uint8_t *) 0xD1FF = 0;
 
   clrscr();
-  if (!found) {
-    puts("no U1MB PBI ROM found");
+  if (!sel) {
+    puts("no ROM, $D800/1 seen:");
+    for (i = 0; i < 8; ++i)
+      show_pair(sigs[i * 2], sigs[i * 2 + 1]);
     return;
   }
-  printf("U1MB HSIO tables, PBI $%02x\n\ndisk:entry (0 = not polled)\n", (unsigned) found);
+  printf("PBI $%02x\ndisk:entry\n", (unsigned) sel);
   for (i = 0; i < U1MB_DISKS; ++i)
     if (table[i])
       show_pair(i + 1, table[i]);
-  puts("\n\ndevice:entry");
+  puts("\ndevice:entry");
   for (i = 0; i < U1MB_DEVICES; ++i)
     show_pair(table[16 + i], table[20 + i]);
-  puts("");
 }
 
 /* The driver's error counts add up across runs; turning it off and on again zeroes them. */

@@ -131,7 +131,7 @@ $(BIN_DIR)/fnaccept$(PROGRAM_EXT): ATARI_START_ADDRESS = 0x0D00
 # it on a PicoBoot disk, as for fnaccept) instead of the DOS-friendly $2400 gives it the room, and
 # the link fails if it ever outgrows it.
 $(BIN_DIR)/ftestnio$(PROGRAM_EXT): ATARI_START_ADDRESS = 0x0D00
-$(BIN_DIR)/ftestnio$(PROGRAM_EXT): EXTRA_PROGRAM_LDFLAGS += -Wl -D,__TOP__=0x9C20 -Wl -D,__STACKSIZE__=0x0600
+$(BIN_DIR)/ftestnio$(PROGRAM_EXT): EXTRA_PROGRAM_LDFLAGS += -Wl -D,__TOP__=0x9C20 -Wl -D,__STACKSIZE__=0x0500
 endif
 
 $(OBJ_DIR):
