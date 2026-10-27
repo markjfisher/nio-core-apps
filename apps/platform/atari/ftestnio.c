@@ -34,9 +34,12 @@ static fn_wifi_status_t wifi;
 static fn_disk_info_t disk;
 static char time_text[FN_MAX_TIME_STRING + 1];
 static char timezone[FN_MAX_TIMEZONE_LEN + 1];
-static char mounts[420];   /* the list-mounts payload limit, as in FDRIVE */
 static char shown_name[27];
 static uint8_t sector[512];
+/* The list-mounts payload (420 bytes at most, as in FDRIVE) shares the sector buffer: it is printed
+ * before the first sector is read. */
+#define MOUNTS_MAX 420u
+#define mounts ((char *) sector)
 
 /* One result line: the step's name, then OK or the FujiNet status code. */
 static void report(const char *name, uint8_t status)
@@ -177,7 +180,7 @@ static void page_storage(void)
   puts("");
 
   mounts[0] = '\0';
-  report_fnsvc("mounts", fnsvc_disk_list_mounts(0, mounts, sizeof(mounts), &count, &more));
+  report_fnsvc("mounts", fnsvc_disk_list_mounts(0, mounts, MOUNTS_MAX, &count, &more));
   print_lines(mounts, 2);
 
   status = fn_disk_info(BOOT_SLOT, &disk);
