@@ -314,6 +314,11 @@ static void page_bench(void)
            (unsigned long) bytes * rate / ticks);
     printf("%lu ms per read\n", (unsigned long) ticks * 1000ul / rate / BENCH_READS);
   }
+  /* What the high-speed driver ran into (it retries an error after the ACK at standard speed). */
+  if (fn_atari_hsio_index() != 0xFFu)
+    printf("hs errors to%u nak%u frm%u ovr%u chk%u\n", (unsigned) fn_atari_hsio_error_count(0x8A),
+           (unsigned) fn_atari_hsio_error_count(0x8B), (unsigned) fn_atari_hsio_error_count(0x8C),
+           (unsigned) fn_atari_hsio_error_count(0x8E), (unsigned) fn_atari_hsio_error_count(0x8F));
   puts("");
   puts("now: sio.status on the FujiNet");
 }
