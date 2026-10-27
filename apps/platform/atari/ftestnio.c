@@ -259,6 +259,26 @@ static void page_probe(void)
   puts("now: sio.status on the FujiNet");
 }
 
+/* Toggles the library's high-speed SIO for native calls (the FujiNet needs sio.hsio set). */
+static void page_hsio(void)
+{
+  uint8_t status;
+
+  clrscr();
+  puts("FTESTNIO - native high speed");
+  puts("");
+  if (fn_atari_hsio_index() != 0xFFu) {
+    fn_atari_hsio_disable();
+    puts("high speed off");
+  } else {
+    status = fn_atari_hsio_enable();
+    if (status == FN_OK)
+      printf("high speed on, index %u\n", (unsigned) fn_atari_hsio_index());
+    else
+      printf("not enabled: ERR $%02x\n  (sio.hsio on the FujiNet?)\n", (unsigned) status);
+  }
+}
+
 #define BENCH_READS 100u
 
 /* Reads BENCH_READS sectors of the boot disk through the native endpoint and times it with the OS
@@ -320,12 +340,15 @@ int main(void)
     char key;
 
     puts("");
-    puts("P probe  B bench  other: finish");
+    printf("P probe  B bench  H high speed (%s)\n", fn_atari_hsio_index() == 0xFFu ? "off" : "on");
+    puts("other: finish");
     key = cgetc();
     if (key == 'p' || key == 'P')
       page_probe();
     else if (key == 'b' || key == 'B')
       page_bench();
+    else if (key == 'h' || key == 'H')
+      page_hsio();
     else
       break;
   }
