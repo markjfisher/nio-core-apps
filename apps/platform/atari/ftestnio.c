@@ -332,11 +332,15 @@ typedef struct {
 } timing_t;
 
 /* kind 0: raw OS SIO to a device, 4 byte reply (one command frame, no native protocol);
+ * kind 0x80/0x81: the same single frames through the library's SIO entry, so they run at the
+ * driver's speed once H is on (a 'Q' and a 3 byte 'P' to 0x7f: one transaction each, no payload);
  * kind 1: fn_fuji_get_info (the native protocol's three transactions, tiny payload);
  * kind 2/3: fn_disk_read_sector with the capacity shown (three transactions plus a sector). */
 static const timing_t timings[] = {
   { "OS D1: status", 0x31, 0 },
   { "OS 0x7f query", 0x7f, 0 },
+  { "lib 0x7f query", 0x80, 0 },
+  { "lib 0x7f poll", 0x81, 0 },
   { "native info", 1, 0 },
   { "native read 128", 3, 128 },
   { "native read 256", 3, 256 },
@@ -359,6 +363,19 @@ static uint8_t timing_call(const timing_t *t, uint16_t i)
     OS.dcb.dbyt = 4;
     OS.dcb.daux = 0;
     sio_call();
+    return OS.dcb.dstats == 1 ? FN_OK : FN_ERR_IO;
+  }
+  if (t->kind == 0x80 || t->kind == 0x81) {
+    OS.dcb.ddevic = 0x7f;
+    OS.dcb.dunit = 1;
+    OS.dcb.dcomnd = (t->kind == 0x80) ? 'Q' : 'P';
+    OS.dcb.dstats = 0x40;
+    OS.dcb.dbuf = sector;
+    OS.dcb.dtimlo = 3;
+    OS.dcb.dunuse = 0;
+    OS.dcb.dbyt = (t->kind == 0x80) ? 4 : 3;
+    OS.dcb.daux = 0;
+    fn_atari_sio_call();
     return OS.dcb.dstats == 1 ? FN_OK : FN_ERR_IO;
   }
   if (t->kind == 1)
