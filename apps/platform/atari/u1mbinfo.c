@@ -116,7 +116,7 @@ int main(void)
     puts("");
     dump_tables();
   }
-  puts("done; sio.status on the FujiNet");
-  for (;;)
-    cgetc();
+  puts("done (key to exit); sio.status on the FujiNet");
+  cgetc();
+  return 0;
 }
