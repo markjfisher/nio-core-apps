@@ -1,0 +1,6 @@
+# A boot disk that runs only u1mbinfo (the U1MB HSIO table test), for experiments:
+#   make TARGET=atari boot-disk BOOT_DISK_MANIFEST=boot-disk/manifests/atari-u1mbinfo.yaml \
+#        BOOT_DISK_OUTPUT_DIR=build/atari/disk/boot-u1mbinfo
+apps:
+  - src: ${BOOT_DISK_BIN}/u1mbinfo.xex
+    name: autorun.xex
