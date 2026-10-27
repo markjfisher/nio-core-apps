@@ -279,6 +279,15 @@ static void page_hsio(void)
   }
 }
 
+/* The driver's error counts add up across runs; turning it off and on again zeroes them. */
+static void hsio_zero_counts(void)
+{
+  if (fn_atari_hsio_index() != 0xFFu) {
+    fn_atari_hsio_disable();
+    (void) fn_atari_hsio_enable();
+  }
+}
+
 #define BENCH_READS 100u
 
 /* Reads BENCH_READS sectors of the boot disk through the native endpoint and times it with the OS
@@ -294,10 +303,7 @@ static void page_bench(void)
   uint32_t bytes = 0;
   uint8_t rate = (get_tv() == AT_PAL) ? 50u : 60u;
 
-  if (fn_atari_hsio_index() != 0xFFu) {
-    fn_atari_hsio_disable();
-    (void) fn_atari_hsio_enable();
-  }
+  hsio_zero_counts();
   clrscr();
   puts("FTESTNIO - native read benchmark");
   puts("");
@@ -399,13 +405,9 @@ static void page_timing(void)
   uint32_t tenths;
   uint8_t rate = (get_tv() == AT_PAL) ? 50u : 60u;
 
-  /* The driver's error counts add up across runs; turning it off and on again zeroes them. */
-  if (fn_atari_hsio_index() != 0xFFu) {
-    fn_atari_hsio_disable();
-    (void) fn_atari_hsio_enable();
-  }
+  hsio_zero_counts();
   clrscr();
-  printf("FTESTNIO - call timing, hs %s\n\n", fn_atari_hsio_index() == 0xFFu ? "off" : "on");
+  printf("FTESTNIO - timing, hs %s\n\n", fn_atari_hsio_index() == 0xFFu ? "off" : "on");
   for (k = 0; k < sizeof(timings) / sizeof(timings[0]); ++k) {
     failed = 0;
     start = ((uint16_t) OS.rtclok[1] << 8) | OS.rtclok[2];
