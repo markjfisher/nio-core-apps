@@ -110,7 +110,10 @@ int main(void)
     printf("key: send %s\n", steps[i].what);
     cgetc();
     send(&steps[i]);
-    printf("-> $%02x\n", (unsigned) OS.dcb.dstats);
+    printf("-> $%02x reply", (unsigned) OS.dcb.dstats);
+    pair(buffer[0], buffer[1]);
+    pair(buffer[2], buffer[3]);
+    puts("");
     dump_tables();
   }
   puts("done; sio.status on the FujiNet");
