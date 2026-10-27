@@ -323,6 +323,81 @@ static void page_bench(void)
   puts("now: sio.status on the FujiNet");
 }
 
+#define TIMING_CALLS 100u
+
+typedef struct {
+  const char *what;
+  uint8_t kind;
+  uint16_t capacity; /* kind 3: the read's maxBytes */
+} timing_t;
+
+/* kind 0: raw OS SIO to a device, 4 byte reply (one command frame, no native protocol);
+ * kind 1: fn_fuji_get_info (the native protocol's three transactions, tiny payload);
+ * kind 2/3: fn_disk_read_sector with the capacity shown (three transactions plus a sector). */
+static const timing_t timings[] = {
+  { "OS D1: status", 0x31, 0 },
+  { "OS 0x7f query", 0x7f, 0 },
+  { "native info", 1, 0 },
+  { "native read 128", 3, 128 },
+  { "native read 256", 3, 256 },
+  { "native read 512", 3, 512 }
+};
+
+static uint8_t timing_call(const timing_t *t, uint16_t i)
+{
+  fn_fuji_info_t info;
+  uint16_t length;
+
+  if (t->kind == 0x31 || t->kind == 0x7f) {
+    OS.dcb.ddevic = t->kind;
+    OS.dcb.dunit = 1;
+    OS.dcb.dcomnd = (t->kind == 0x31) ? 'S' : 'Q';
+    OS.dcb.dstats = 0x40;
+    OS.dcb.dbuf = sector;
+    OS.dcb.dtimlo = 3;
+    OS.dcb.dunuse = 0;
+    OS.dcb.dbyt = 4;
+    OS.dcb.daux = 0;
+    sio_call();
+    return OS.dcb.dstats == 1 ? FN_OK : FN_ERR_IO;
+  }
+  if (t->kind == 1)
+    return fn_fuji_get_info(&info);
+  return fn_disk_read_sector(BOOT_SLOT, i & 0x0Fu, sector, t->capacity, &length);
+}
+
+/* Times TIMING_CALLS of each call type, so the fixed cost of a transaction can be separated from
+ * the cost of the data in it. Run it with high speed off, then on, to compare. */
+static void page_timing(void)
+{
+  uint8_t k;
+  uint16_t i;
+  uint16_t start;
+  uint16_t ticks;
+  uint16_t failed;
+  uint32_t tenths;
+  uint8_t rate = (get_tv() == AT_PAL) ? 50u : 60u;
+
+  clrscr();
+  printf("FTESTNIO - call timing, hs %s\n\n", fn_atari_hsio_index() == 0xFFu ? "off" : "on");
+  for (k = 0; k < sizeof(timings) / sizeof(timings[0]); ++k) {
+    failed = 0;
+    start = ((uint16_t) OS.rtclok[1] << 8) | OS.rtclok[2];
+    for (i = 0; i < TIMING_CALLS; ++i)
+      if (timing_call(&timings[k], i) != FN_OK)
+        ++failed;
+    ticks = (((uint16_t) OS.rtclok[1] << 8) | OS.rtclok[2]) - start;
+    tenths = (uint32_t) ticks * 10000ul / rate / TIMING_CALLS;
+    printf("%-16s %3lu.%lu ms  fail %u\n", timings[k].what, tenths / 10, tenths % 10, (unsigned) failed);
+  }
+  if (fn_atari_hsio_index() != 0xFFu)
+    printf("hs errors to%u nak%u frm%u ovr%u chk%u\n", (unsigned) fn_atari_hsio_error_count(0x8A),
+           (unsigned) fn_atari_hsio_error_count(0x8B), (unsigned) fn_atari_hsio_error_count(0x8C),
+           (unsigned) fn_atari_hsio_error_count(0x8E), (unsigned) fn_atari_hsio_error_count(0x8F));
+  puts("");
+  puts("now: sio.status on the FujiNet");
+}
+
 int main(void)
 {
   uint8_t status = fn_init();
@@ -345,13 +420,15 @@ int main(void)
     char key;
 
     puts("");
-    printf("P probe  B bench  H high speed (%s)\n", fn_atari_hsio_index() == 0xFFu ? "off" : "on");
+    printf("P probe  B bench  T timing  H high speed (%s)\n", fn_atari_hsio_index() == 0xFFu ? "off" : "on");
     puts("other: finish");
     key = cgetc();
     if (key == 'p' || key == 'P')
       page_probe();
     else if (key == 'b' || key == 'B')
       page_bench();
+    else if (key == 't' || key == 'T')
+      page_timing();
     else if (key == 'h' || key == 'H')
       page_hsio();
     else
