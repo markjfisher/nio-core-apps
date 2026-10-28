@@ -27,16 +27,15 @@ typedef struct {
   const char *what;
 } step_t;
 
-/* One command type per fresh device ID, so each registers (or not) on its own: the first command seen
- * for $7F, a Q, registered it at standard speed with no 3F on the wire. Do the commands the high-speed
- * flag is said to apply to ($52 read, $50 and $57 write) get a probe? sio.status on the FujiNet lists
- * the first frames for other devices, so a 3F for one of them would show there. The native endpoint's
- * P (poll) is $50 with a read direction, which is also checked. */
+/* With a U1MB BIOS that polls every device ($3F first, then the other detection commands), $7F is
+ * the one the FujiNet answers: a Q (our query), a status, a repeat of the Q (now at whatever speed was
+ * agreed), and $70 for comparison (nothing answers it, so the whole detection sequence times out).
+ * sio.status on the FujiNet shows "3F asked: ... 0x7f n" and the first frames for other devices. */
 static const step_t steps[] = {
-  { 0x70, 'S', 0x40, 4, "70 S status" },
-  { 0x71, 'R', 0x40, 4, "71 R read" },
-  { 0x72, 'W', 0x80, 4, "72 W write" },
-  { 0x73, 'P', 0x40, 3, "73 P (as the poll)" }
+  { 0x7f, 'Q', 0x40, 4, "7F Q query" },
+  { 0x7f, 'Q', 0x40, 4, "7F Q again" },
+  { 0x7f, 'S', 0x40, 4, "7F S status" },
+  { 0x70, 'S', 0x40, 4, "70 S status" }
 };
 
 static uint8_t buffer[8];
