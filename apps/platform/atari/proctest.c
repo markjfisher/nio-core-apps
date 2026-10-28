@@ -101,6 +101,9 @@ static void page_url(void)
   uint16_t not_ready = 0;
   uint32_t offset = 0;
   uint32_t total = 0;
+  uint32_t sent = 0;        /* bytes written, which is also the next write offset */
+  uint16_t sends = 0;
+  uint8_t send_status = 0;
   uint8_t tail_len = 0;
   uint8_t last_status = 0;  /* what the last fn_read returned, and its flags */
   uint8_t last_flags = 0;
@@ -134,7 +137,7 @@ static void page_url(void)
   use_proc = (fn_atari_capability_flags() & FN_ATARI_CAP_PROC) != 0;
   if (use_proc) (void) fn_atari_proc_enable();
   clrscr();
-  cprintf("%s\r\nPROC advertised: %s   M mode, X exit\r\n", url, use_proc ? "yes" : "NO");
+  cprintf("%s\r\nPROC advertised: %s   M mode, S send, X exit\r\n", url, use_proc ? "yes" : "NO");
   tail[0] = '\0';
 
   for (;;) {
@@ -143,6 +146,15 @@ static void page_url(void)
     if (kbhit()) {
       const char key = cgetc();
       if (key == 'x' || key == 'X') break;
+      if ((key == 's' || key == 'S') && !is_http) {   /* an echo service sends it back */
+        static const char hello[] = "hello from the Atari\n";
+        uint16_t written = 0;
+        send_status = fn_write(handle, sent, (const uint8_t *) hello, sizeof(hello) - 1, &written);
+        if (send_status == FN_OK) sent += written;
+        ++sends;
+        dirty = 1;
+        last_change = OS.rtclok[2];
+      }
       if (key == 'm' || key == 'M') {
         use_proc = !use_proc;
         if (use_proc) (void) fn_atari_proc_enable();
@@ -221,7 +233,8 @@ static void page_url(void)
               (unsigned) not_ready);
       cprintf("last fn_read: $%02x flags $%02x%s     \r\n", (unsigned) last_status, (unsigned) last_flags,
               (last_flags & FN_READ_EOF) ? " EOF (peer closed)" : "");
-      cprintf("bytes: %lu   (| = newline)\r\n", (unsigned long) total);
+      cprintf("bytes: %lu   sent %lu (%u, last $%02x)   \r\n", (unsigned long) total, (unsigned long) sent,
+              (unsigned) sends, (unsigned) send_status);
       for (i = 0; i < LOG_SIZE; ++i) cputc(i < tail_len ? tail[i] : ' ');
       dirty = 0;
     }
