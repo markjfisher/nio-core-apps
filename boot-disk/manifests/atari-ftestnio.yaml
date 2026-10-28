@@ -1,0 +1,6 @@
+# The hardware bring-up boot disk (ftestnio), which used to be the default Atari boot disk:
+#   make TARGET=atari boot-disk BOOT_DISK_MANIFEST=boot-disk/manifests/atari-ftestnio.yaml \
+#        BOOT_DISK_OUTPUT_DIR=build/atari/disk/boot-ftestnio
+apps:
+  - src: ${BOOT_DISK_BIN}/ftestnio.xex
+    name: autorun.xex

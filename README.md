@@ -25,8 +25,10 @@ make amiga                         # builds wb13, wb31, and wb32
 make amiga AMIGA_PROFILE=wb13      # one explicit profile
 ```
 
-The Atari boot disk starts `ftestnio`, staged as `autorun.xex`: PicoBoot runs the first directory
-entry and `dir2atr` sorts by name (see `boot-disk/manifests/atari.yaml`).
+The Atari boot disk starts the FujiNet NIO config application (`repos/nio-config`, build it first),
+staged as `autorun.xex`: PicoBoot runs the first directory entry and `dir2atr` sorts by name (see
+`boot-disk/manifests/atari.yaml`). `boot-disk/manifests/atari-ftestnio.yaml` builds the old
+hardware bring-up disk that starts `ftestnio`.
 
 Boot disks are repo-owned:
 
