@@ -356,10 +356,11 @@ int main(void)
     result[FNACCEPT_CAPABILITY_STATUS] = status;
     put_result_u16(FNACCEPT_CAPABILITY_MAX_PAYLOAD, fn_atari_max_payload());
     result[FNACCEPT_CAPABILITY_FLAGS] = fn_atari_capability_flags();
-    /* Native-v1 currently advertises no optional PROC notification.  This is
-     * an accepted capability outcome, not a failed mandatory test: installing
-     * a VPRCED handler or synthesising a notification here would prove nothing
-     * about the production endpoint. */
+    /* Q flag bit 1 says the FujiNet pulses PROC when a network session becomes
+     * readable (off unless `sio.tune proc 1`).  Either answer is an accepted
+     * capability outcome, not a failed mandatory test: installing a VPRCED
+     * handler or synthesising a notification here would prove nothing about the
+     * production endpoint (PROCTEST and its TCP page exercise it). */
     result[FNACCEPT_PROC_RESULT] =
         (result[FNACCEPT_CAPABILITY_FLAGS] & FN_ATARI_CAP_PROC) != 0u
             ? FNACCEPT_PROC_ADVERTISED_UNEXERCISED
