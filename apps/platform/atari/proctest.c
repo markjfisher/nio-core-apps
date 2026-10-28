@@ -8,10 +8,12 @@
  *   I  the library's interrupt (fn_atari_proc_enable): the PIA raises the OS PROCEED interrupt and the
  *      handler at VPRCED counts it. It counts when the interrupt is delivered as well.
  *
- * T  the real thing: open a TCP session to a host you type, and read whatever it sends, either only when
- *    PROC says so or by trying every time round the loop, counting the SIO reads each way costs. It needs
- *    `sio.tune proc 1` on the FujiNet and something to talk to, for example `nc -l 7000` on a PC and type
- *    lines into it.
+ * T  the real thing: open a session to a URL you type (tcp://host:port, tls://host:port, http://... or
+ *    https://...; a bare host:port is tcp), and take what comes, either only when PROC says so or by trying
+ *    every time round the loop, counting the SIO calls each way costs. HTTP sessions wait for the status
+ *    (fn_info) and then the body. It needs `sio.tune proc 1` on the FujiNet and something to talk to: for
+ *    TCP `nc -l 7000` on a PC, for HTTP httpbin (scripts/start_test_services.sh http), whose /delay/5 answers
+ *    after five seconds and /drip?duration=5&numbytes=20 spreads bytes over time.
  *
  * P and I make no FujiNet library call other than the PROC ones, so nothing else is on the SIO bus.
  */
@@ -73,12 +75,19 @@ static void read_line(char *buf, uint8_t max)
   buf[len] = '\0';
 }
 
-static void page_tcp(void)
+static void page_url(void)
 {
-  static char line[40];
+  static char line[72];
+  static char url[80];
   static uint8_t data[128];
   static char tail[LOG_SIZE + 1];   /* the latest bytes received, as text */
-  char *colon;
+  uint8_t is_http;
+  uint8_t have_info;
+  uint16_t http_status = 0;
+  uint32_t content_length = 0;
+  uint8_t info_flags = 0;
+  uint16_t infos = 0;       /* fn_info calls issued */
+  uint8_t last_info = 0;
   fn_handle_t handle;
   uint16_t got;
   uint8_t flags;
@@ -98,31 +107,34 @@ static void page_tcp(void)
   uint8_t last_draw = 0;
 
   clrscr();
-  cputs("PROCTEST - TCP session\r\n\r\nhost:port (e.g. 192.168.1.5:7000): ");
+  cputs("PROCTEST - network session\r\n\r\nurl, e.g. http://192.168.1.5:8080/delay/5\r\nor tcp:// tls:// host:port: ");
   read_line(line, sizeof(line));
-  colon = strrchr(line, ':');
-  if (!colon || colon == line) {
-    cputs("\r\nneed host:port\r\n");
-    cgetc();
-    return;
+  if (line[0] == '\0') return;
+  if (strstr(line, "://")) {
+    strcpy(url, line);
+  } else {
+    strcpy(url, "tcp://");
+    strcat(url, line);
   }
-  *colon = '\0';
+  is_http = strncmp(url, "http", 4) == 0;
 
   status = fn_init();
   if (status == FN_OK) status = fn_atari_query_capabilities();
   cprintf("\r\ninit/capabilities: $%02x  flags $%02x  PROC advertised: %s\r\n", (unsigned) status,
           (unsigned) fn_atari_capability_flags(),
           (fn_atari_capability_flags() & FN_ATARI_CAP_PROC) ? "yes" : "NO (sio.tune proc 1)");
-  status = fn_tcp_open(&handle, line, (uint16_t) atoi(colon + 1));
-  cprintf("tcp open: $%02x\r\n", (unsigned) status);
+  status = fn_open(&handle, is_http ? FN_METHOD_GET : 0, url, 0);
+  cprintf("open: $%02x\r\n", (unsigned) status);
   if (status != FN_OK) {
     cputs("press a key\r\n");
     cgetc();
     return;
   }
+  have_info = !is_http;     /* streams answer at once; HTTP waits for the status */
   use_proc = (fn_atari_capability_flags() & FN_ATARI_CAP_PROC) != 0;
   if (use_proc) (void) fn_atari_proc_enable();
-  cputs("\r\nM toggles PROC / polling, X exits\r\n");
+  clrscr();
+  cprintf("%s\r\nPROC advertised: %s   M mode, X exit\r\n", url, use_proc ? "yes" : "NO");
   tail[0] = '\0';
 
   for (;;) {
@@ -135,7 +147,7 @@ static void page_tcp(void)
         use_proc = !use_proc;
         if (use_proc) (void) fn_atari_proc_enable();
         else fn_atari_proc_disable();
-        told = reads = with_data = not_ready = 0;
+        told = reads = with_data = not_ready = infos = 0;
         dirty = 1;
       }
     }
@@ -148,6 +160,19 @@ static void page_tcp(void)
       }
     } else {
       ask = 1;
+    }
+    if (ask && !have_info) {   /* HTTP: the status first */
+      ++infos;
+      last_info = fn_info(handle, &http_status, &content_length, &info_flags);
+      if (last_info == FN_OK) {
+        have_info = 1;
+      } else if (last_info != FN_ERR_NOT_READY) {
+        have_info = 1;   /* a failure: stop asking and let the read report it */
+      } else {
+        ask = 0;
+      }
+      dirty = 1;
+      last_change = OS.rtclok[2];
     }
     while (ask) {   /* read until the session says there is no more */
       got = 0;
@@ -185,9 +210,13 @@ static void page_tcp(void)
     if ((dirty && (uint8_t) (OS.rtclok[2] - last_change) >= 3) || (uint8_t) (OS.rtclok[2] - last_draw) >= 25) {
       uint8_t i;
       last_draw = OS.rtclok[2];
-      gotoxy(0, 8);
+      gotoxy(0, 5);
       cprintf("mode: %s    \r\n\r\n", use_proc ? "PROC: read when told  " : "POLLING: read every pass");
       cprintf("told by PROC:  %5u\r\n", (unsigned) told);
+      if (is_http) {
+        cprintf("fn_info calls: %5u  last $%02x  HTTP %u len %lu\r\n", (unsigned) infos, (unsigned) last_info,
+                (unsigned) http_status, (unsigned long) content_length);
+      }
       cprintf("fn_read calls: %5u  (data %u, NOT_READY %u)   \r\n", (unsigned) reads, (unsigned) with_data,
               (unsigned) not_ready);
       cprintf("last fn_read: $%02x flags $%02x%s     \r\n", (unsigned) last_status, (unsigned) last_flags,
@@ -212,7 +241,7 @@ int main(void)
   clrscr();
   cputs("PROCTEST - PROC line from the FujiNet\r\n\r\n");
   cputs("On the FujiNet console: sio.proc pulse 5\r\n\r\n");
-  cputs("P poll the flag  I interrupt  T tcp  R reset  X exit\r\n");
+  cputs("P poll the flag  I interrupt  T session  R reset  X exit\r\n");
   fn_atari_proc_disable();
   clear_flag();   /* any old flag */
 
@@ -221,11 +250,11 @@ int main(void)
       const char key = cgetc();
       if (key == 'x' || key == 'X') break;
       if (key == 't' || key == 'T') {
-        page_tcp();
+        page_url();
         clrscr();
         cputs("PROCTEST - PROC line from the FujiNet\r\n\r\n");
         cputs("On the FujiNet console: sio.proc pulse 5\r\n\r\n");
-        cputs("P poll the flag  I interrupt  T tcp  R reset  X exit\r\n");
+        cputs("P poll the flag  I interrupt  T session  R reset  X exit\r\n");
         fn_atari_proc_disable();
         mode = MODE_POLL;
         clear_flag();
