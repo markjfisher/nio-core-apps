@@ -19,24 +19,26 @@
 
 #define MODE_POLL      0
 #define MODE_INTERRUPT 1
+#define QUIET_JIFFIES  3   /* the screen is redrawn this long after the last edge, not while edges are coming */
 
-static void show(uint8_t mode, uint16_t polled, uint8_t flag)
+/* Redrawing takes longer than the gap between pulses, and the PIA flag is a single latch, so counting
+ * has to be a tight loop that never draws; the screen follows when the edges have stopped. */
+static void show(uint8_t mode, uint16_t polled, uint8_t pending)
 {
   gotoxy(0, 8);
-  cprintf("mode: %s       \r\n", mode == MODE_POLL ? "P polling the PIA flag" : "I interrupt (VPRCED)");
-  cprintf("PACTL $%02x  CA1 flag %s \r\n\r\n", (unsigned) PIA.pactl, flag ? "SET  " : "clear");
+  cprintf("mode: %s       \r\n\r\n", mode == MODE_POLL ? "P polling the PIA flag" : "I interrupt (VPRCED)");
   cprintf("polled edges:  %5u\r\n", (unsigned) polled);
-  cprintf("interrupts:    %5u   pending: %s\r\n", (unsigned) fn_atari_proc_count(),
-          mode == MODE_INTERRUPT && fn_atari_proc_pending() ? "yes" : "no ");
+  cprintf("interrupts:    %5u   since last redraw: %s\r\n", (unsigned) fn_atari_proc_count(),
+          pending ? "yes" : "no ");
 }
 
 int main(void)
 {
   uint8_t mode = MODE_POLL;
   uint16_t polled = 0;
-  uint8_t flag = 0;
-  uint8_t last_shown = 0;
-  uint16_t spin = 0;
+  uint16_t seen = 0;        /* the interrupt count last noticed */
+  uint8_t dirty = 1;
+  uint8_t last_edge = 0;    /* the clock when the last change was noticed */
 
   clrscr();
   cputs("PROCTEST - PROC line from the FujiNet\r\n\r\n");
@@ -52,6 +54,7 @@ int main(void)
       if (key == 'p' || key == 'P') {
         fn_atari_proc_disable();
         mode = MODE_POLL;
+        (void) PIA.porta;
       } else if (key == 'i' || key == 'I') {
         (void) fn_atari_proc_enable();
         mode = MODE_INTERRUPT;
@@ -62,19 +65,25 @@ int main(void)
           (void) fn_atari_proc_enable();
         }
       }
-      last_shown = 0;
+      seen = fn_atari_proc_count();
+      last_edge = OS.rtclok[2] - QUIET_JIFFIES;
+      dirty = 1;
     }
-    if (mode == MODE_POLL && (PIA.pactl & 0x80u)) {
-      ++polled;
-      flag = 1;
-      (void) PIA.porta;   /* reading PORTA clears the flag */
-      last_shown = 0;
-    } else if (mode == MODE_POLL) {
-      flag = 0;
+    if (mode == MODE_POLL) {
+      if (PIA.pactl & 0x80u) {
+        ++polled;
+        (void) PIA.porta;   /* reading PORTA clears the flag */
+        last_edge = OS.rtclok[2];
+        dirty = 1;
+      }
+    } else if (fn_atari_proc_count() != seen) {
+      seen = fn_atari_proc_count();
+      last_edge = OS.rtclok[2];
+      dirty = 1;
     }
-    if (!last_shown || ++spin == 0) {
-      show(mode, polled, flag);
-      last_shown = 1;
+    if (dirty && (uint8_t) (OS.rtclok[2] - last_edge) >= QUIET_JIFFIES) {
+      show(mode, polled, mode == MODE_INTERRUPT ? fn_atari_proc_pending() : 0);
+      dirty = 0;
     }
   }
   fn_atari_proc_disable();
