@@ -37,6 +37,7 @@ static void clear_flag(void)
   sink = PORTA;
 }
 
+#define LOG_SIZE       120   /* three screen lines of received text */
 #define MODE_POLL      0
 #define MODE_INTERRUPT 1
 #define QUIET_JIFFIES  3   /* the screen is redrawn this long after the last edge, not while edges are coming */
@@ -75,7 +76,8 @@ static void read_line(char *buf, uint8_t max)
 static void page_tcp(void)
 {
   static char line[40];
-  static uint8_t data[64];
+  static uint8_t data[128];
+  static char tail[LOG_SIZE + 1];   /* the latest bytes received, as text */
   char *colon;
   fn_handle_t handle;
   uint16_t got;
@@ -90,11 +92,10 @@ static void page_tcp(void)
   uint16_t not_ready = 0;
   uint32_t offset = 0;
   uint32_t total = 0;
-  uint8_t shown = 0;        /* the last bytes received, as text */
+  uint8_t tail_len = 0;
   uint8_t last_status = 0;  /* what the last fn_read returned, and its flags */
   uint8_t last_flags = 0;
   uint8_t last_draw = 0;
-  char last[17];
 
   clrscr();
   cputs("PROCTEST - TCP session\r\n\r\nhost:port (e.g. 192.168.1.5:7000): ");
@@ -122,7 +123,7 @@ static void page_tcp(void)
   use_proc = (fn_atari_capability_flags() & FN_ATARI_CAP_PROC) != 0;
   if (use_proc) (void) fn_atari_proc_enable();
   cputs("\r\nM toggles PROC / polling, X exits\r\n");
-  last[0] = '\0';
+  tail[0] = '\0';
 
   for (;;) {
     uint8_t ask = 0;
@@ -159,9 +160,19 @@ static void page_tcp(void)
         ++with_data;
         offset += got;
         total += got;
-        shown = got > 16 ? 16 : (uint8_t) got;
-        memcpy(last, data, shown);
-        last[shown] = '\0';
+        /* append to the rolling tail, dropping the oldest text when it is full */
+        {
+          uint8_t k;
+          for (k = 0; k < got; ++k) {
+            const char c = (char) data[k];
+            if (tail_len == LOG_SIZE) {
+              memmove(tail, tail + 1, LOG_SIZE - 1);
+              --tail_len;
+            }
+            tail[tail_len++] = (c >= ' ' && c < 0x7F) ? c : (c == '\n' ? '|' : '.');
+          }
+          tail[tail_len] = '\0';
+        }
         dirty = 1;
         last_change = OS.rtclok[2];
       } else {
@@ -181,9 +192,8 @@ static void page_tcp(void)
               (unsigned) not_ready);
       cprintf("last fn_read: $%02x flags $%02x%s     \r\n", (unsigned) last_status, (unsigned) last_flags,
               (last_flags & FN_READ_EOF) ? " EOF (peer closed)" : "");
-      cprintf("bytes: %lu\r\nlast: ", (unsigned long) total);
-      for (i = 0; i < shown; ++i) cputc(last[i] >= ' ' && last[i] < 0x7F ? last[i] : '.');
-      cputs("                \r\n");
+      cprintf("bytes: %lu   (| = newline)\r\n", (unsigned long) total);
+      for (i = 0; i < LOG_SIZE; ++i) cputc(i < tail_len ? tail[i] : ' ');
       dirty = 0;
     }
   }
