@@ -87,6 +87,11 @@ static void page_url(void)
   uint32_t content_length = 0;
   uint8_t info_flags = 0;
   uint16_t infos = 0;       /* fn_info calls issued */
+  uint16_t readies = 0;     /* fn_ready calls issued, and how many listed this session */
+  uint16_t listed = 0;
+  uint8_t ready_status = 0;
+  fn_ready_entry_t entry[2];
+  uint8_t entries;
   uint8_t last_info = 0;
   fn_handle_t handle;
   uint16_t got;
@@ -159,14 +164,29 @@ static void page_url(void)
         use_proc = !use_proc;
         if (use_proc) (void) fn_atari_proc_enable();
         else fn_atari_proc_disable();
-        told = reads = with_data = not_ready = infos = 0;
+        told = reads = with_data = not_ready = infos = readies = listed = 0;
         dirty = 1;
       }
     }
     if (use_proc) {
       if (fn_atari_proc_pending()) {
         ++told;
-        ask = 1;
+        /* Told something is ready: ask which session, instead of trying each. Firmware that predates the
+         * call answers UNSUPPORTED, and then the one session is simply tried. */
+        entries = 0;
+        ready_status = fn_ready(entry, 2, &entries);
+        ++readies;
+        if (ready_status == FN_OK) {
+          uint8_t k;
+          for (k = 0; k < entries; ++k) {
+            if (entry[k].handle == handle) {
+              ask = 1;
+              ++listed;
+            }
+          }
+        } else {
+          ask = 1;
+        }
         dirty = 1;
         last_change = OS.rtclok[2];
       }
@@ -229,10 +249,15 @@ static void page_url(void)
         cprintf("fn_info calls: %5u  last $%02x  HTTP %u len %lu\r\n", (unsigned) infos, (unsigned) last_info,
                 (unsigned) http_status, (unsigned long) content_length);
       }
+      if (use_proc) {
+        cprintf("fn_ready calls:%5u  listed us %u, last $%02x\r\n", (unsigned) readies, (unsigned) listed,
+                (unsigned) ready_status);
+      }
       cprintf("fn_read calls: %5u  (data %u, NOT_READY %u)   \r\n", (unsigned) reads, (unsigned) with_data,
               (unsigned) not_ready);
-      cprintf("last fn_read: $%02x flags $%02x%s     \r\n", (unsigned) last_status, (unsigned) last_flags,
-              (last_flags & FN_READ_EOF) ? " EOF (peer closed)" : "");
+      cprintf("last fn_read: $%02x flags $%02x%s  held %s%u   \r\n", (unsigned) last_status, (unsigned) last_flags,
+              (last_flags & FN_READ_EOF) ? " EOF" : "", (last_flags & FN_READ_AVAILABLE) ? "" : "?",
+              (unsigned) ((last_flags & FN_READ_AVAILABLE) ? fn_read_available() : 0));
       cprintf("bytes: %lu   sent %lu (%u, last $%02x)   \r\n", (unsigned long) total, (unsigned long) sent,
               (unsigned) sends, (unsigned) send_status);
       for (i = 0; i < LOG_SIZE; ++i) cputc(i < tail_len ? tail[i] : ' ');
