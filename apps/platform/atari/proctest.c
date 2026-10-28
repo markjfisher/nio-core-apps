@@ -91,6 +91,9 @@ static void page_tcp(void)
   uint32_t offset = 0;
   uint32_t total = 0;
   uint8_t shown = 0;        /* the last bytes received, as text */
+  uint8_t last_status = 0;  /* what the last fn_read returned, and its flags */
+  uint8_t last_flags = 0;
+  uint8_t last_draw = 0;
   char last[17];
 
   clrscr();
@@ -150,6 +153,8 @@ static void page_tcp(void)
       flags = 0;
       status = fn_read(handle, offset, data, sizeof(data), &got, &flags);
       ++reads;
+      last_status = status;
+      last_flags = flags;
       if (status == FN_OK && got > 0) {
         ++with_data;
         offset += got;
@@ -164,13 +169,18 @@ static void page_tcp(void)
         ask = 0;
       }
     }
-    if (dirty && (uint8_t) (OS.rtclok[2] - last_change) >= 3) {
+    /* Redraw when something changed and has been quiet a moment, and at least twice a second while polling
+     * (the counts move with no data at all). */
+    if ((dirty && (uint8_t) (OS.rtclok[2] - last_change) >= 3) || (uint8_t) (OS.rtclok[2] - last_draw) >= 25) {
+      last_draw = OS.rtclok[2];
       uint8_t i;
       gotoxy(0, 8);
       cprintf("mode: %s    \r\n\r\n", use_proc ? "PROC: read when told  " : "POLLING: read every pass");
       cprintf("told by PROC:  %5u\r\n", (unsigned) told);
       cprintf("fn_read calls: %5u  (data %u, NOT_READY %u)   \r\n", (unsigned) reads, (unsigned) with_data,
               (unsigned) not_ready);
+      cprintf("last fn_read: $%02x flags $%02x%s     \r\n", (unsigned) last_status, (unsigned) last_flags,
+              (last_flags & FN_READ_EOF) ? " EOF (peer closed)" : "");
       cprintf("bytes: %lu\r\nlast: ", (unsigned long) total);
       for (i = 0; i < shown; ++i) cputc(last[i] >= ' ' && last[i] < 0x7F ? last[i] : '.');
       cputs("                \r\n");
