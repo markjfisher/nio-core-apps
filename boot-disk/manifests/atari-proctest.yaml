@@ -1,0 +1,6 @@
+# A boot disk that runs only proctest (the PROC line test), for experiments:
+#   make TARGET=atari boot-disk BOOT_DISK_MANIFEST=boot-disk/manifests/atari-proctest.yaml \
+#        BOOT_DISK_OUTPUT_DIR=build/atari/disk/boot-proctest
+apps:
+  - src: ${BOOT_DISK_BIN}/proctest.xex
+    name: autorun.xex
