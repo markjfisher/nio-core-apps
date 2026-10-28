@@ -172,8 +172,8 @@ static void page_tcp(void)
     /* Redraw when something changed and has been quiet a moment, and at least twice a second while polling
      * (the counts move with no data at all). */
     if ((dirty && (uint8_t) (OS.rtclok[2] - last_change) >= 3) || (uint8_t) (OS.rtclok[2] - last_draw) >= 25) {
-      last_draw = OS.rtclok[2];
       uint8_t i;
+      last_draw = OS.rtclok[2];
       gotoxy(0, 8);
       cprintf("mode: %s    \r\n\r\n", use_proc ? "PROC: read when told  " : "POLLING: read every pass");
       cprintf("told by PROC:  %5u\r\n", (unsigned) told);
