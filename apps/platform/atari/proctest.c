@@ -17,6 +17,18 @@
 
 #include "fujinet-nio.h"
 
+/* The PIA registers, volatile: a read of PORTA that is not used is what clears the CA1 flag, and cc65
+ * removes an unused read of anything not volatile (the PIA struct in <atari.h> is not). */
+#define PORTA (*(volatile uint8_t *) 0xD300)
+#define PACTL (*(volatile uint8_t *) 0xD302)
+
+static volatile uint8_t sink;
+
+static void clear_flag(void)
+{
+  sink = PORTA;
+}
+
 #define MODE_POLL      0
 #define MODE_INTERRUPT 1
 #define QUIET_JIFFIES  3   /* the screen is redrawn this long after the last edge, not while edges are coming */
@@ -45,7 +57,7 @@ int main(void)
   cputs("On the FujiNet console: sio.proc pulse 5\r\n\r\n");
   cputs("P poll the flag  I interrupt  R reset  X exit\r\n");
   fn_atari_proc_disable();
-  (void) PIA.porta;   /* clear any old flag */
+  clear_flag();   /* any old flag */
 
   for (;;) {
     if (kbhit()) {
@@ -54,7 +66,7 @@ int main(void)
       if (key == 'p' || key == 'P') {
         fn_atari_proc_disable();
         mode = MODE_POLL;
-        (void) PIA.porta;
+        clear_flag();
       } else if (key == 'i' || key == 'I') {
         (void) fn_atari_proc_enable();
         mode = MODE_INTERRUPT;
@@ -70,9 +82,9 @@ int main(void)
       dirty = 1;
     }
     if (mode == MODE_POLL) {
-      if (PIA.pactl & 0x80u) {
+      if (PACTL & 0x80u) {
         ++polled;
-        (void) PIA.porta;   /* reading PORTA clears the flag */
+        clear_flag();   /* reading PORTA clears the flag */
         last_edge = OS.rtclok[2];
         dirty = 1;
       }
