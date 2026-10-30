@@ -33,6 +33,9 @@ boot-disk: boot-disk-$(PLATFORM)
 
 boot-disk-atari: all check-dir2atr build-atari-picoboot | $(BOOT_DISK_OUTPUT_DIR) $(ATARI_CACHE_DIR)
 	$(stage_boot_files)
+	@if test "$(BOOT_DISK_MANIFEST)" = "boot-disk/manifests/atari.yaml"; then \
+		python3 boot-disk/scripts/check_atari_picoboot.py "$(ATARI_PICOBOOT)"; \
+	fi
 	rm -f "$(BOOT_ATARI_IMAGE)"
 	$(DIR2ATR) $(ATARI_DIR2ATR_FLAGS) "$(BOOT_ATARI_IMAGE)" "$(BOOT_DISK_STAGE_DIR)"
 	@echo "Created Atari boot disk: $(BOOT_ATARI_IMAGE)"

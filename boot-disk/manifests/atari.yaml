@@ -1,16 +1,11 @@
-# Paths support shell-style environment expansion (${VAR}) and ~.
-# Relative paths are resolved from the nio-core-apps repository root.
-
-# The Atari boot disk carries exactly one program. PicoBoot runs the first file in the
-# directory and nothing else, there is no DOS to run the others from, and once the
-# configured image is booted the boot disk is no longer reachable. The other F* tools
-# are still built (build/atari/bin) but are not put on this disk.
-#
-# The program is the FujiNet NIO config application (repos/nio-config), the Atari's
-# launcher: the user chooses hosts and disk images, and OPTION boots them. Build it first
-# (`make TARGET=atari` in repos/nio-config); NIO_CONFIG_ATARI_BIN comes from the workspace
-# scripts/env.sh. dir2atr sorts the directory by name, so it is staged as autorun.xex.
-# atari-ftestnio.yaml is the old default (the hardware bring-up screen).
+# PicoBoot runs the first directory entry. The selector probes for two
+# 130XE-compatible banks, then uses PicoBoot to load the appropriate XEX.
+# Build both first in repos/nio-config: make TARGET=atari && make atari-banked.
+# The workspace environment exports NIO_CONFIG and NIO_CONFIG_ATARI_BIN.
 apps:
-  - src: ${NIO_CONFIG_ATARI_BIN}/config-nio.xex
+  - src: ${NIO_CONFIG}/build/atari-banked/bin/loader.xex
     name: autorun.xex
+  - src: ${NIO_CONFIG}/build/atari-banked/bin/config-nio.xex
+    name: banked.xex
+  - src: ${NIO_CONFIG_ATARI_BIN}/config-nio.xex
+    name: standard.xex
