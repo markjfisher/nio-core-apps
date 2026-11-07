@@ -1,5 +1,6 @@
 PLATFORM_msdos := msdos
 PLATFORM_atari := atari
+PLATFORM_c64 := c64
 PLATFORM_bbc := bbc
 PLATFORM_bbc-clib := bbc
 PLATFORM_linux := linux
@@ -7,6 +8,7 @@ PLATFORM_amiga := amiga
 
 COMPILER_FAMILY_msdos := wcc
 COMPILER_FAMILY_atari := cc65
+COMPILER_FAMILY_c64 := cc65
 COMPILER_FAMILY_bbc := cc65
 COMPILER_FAMILY_bbc-clib := cc65
 COMPILER_FAMILY_linux := gcc
@@ -14,6 +16,7 @@ COMPILER_FAMILY_amiga := amigagcc
 
 PROGRAM_EXT_msdos := .exe
 PROGRAM_EXT_atari := .xex
+PROGRAM_EXT_c64 := .prg
 PROGRAM_EXT_bbc :=
 PROGRAM_EXT_bbc-clib :=
 PROGRAM_EXT_linux :=
@@ -40,5 +43,5 @@ NIO_LIB_TARGET := $(NIO_LIB_TARGET_$(TARGET))
 NIO_LIB_FILE := $(NIO_LIB_FILE_$(TARGET))
 
 ifeq ($(PLATFORM),)
-$(error Unknown TARGET '$(TARGET)'. Supported targets: msdos atari bbc bbc-clib linux amiga)
+$(error Unknown TARGET '$(TARGET)'. Supported targets: msdos atari c64 bbc bbc-clib linux amiga)
 endif

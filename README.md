@@ -31,6 +31,12 @@ staged as `autorun.xex`: PicoBoot runs the first directory entry and `dir2atr` s
 hardware bring-up disk that starts `ftestnio`.
 For the U1MB HSIO 0-to-off hardware experiment, see [hsioflip](tools/atari-hsio/hsioflip.md).
 
+The C64 boot disk holds the config app and the [FujiNet demo](apps/platform/c64/fujidemo/README.md)
+its F5 key runs, built by `boot-disk/scripts/create_d64.py` from
+`boot-disk/manifests/c64.yaml`: `make TARGET=c64 boot-disk`, after `make c64` in
+`repos/nio-config`. `LOAD"*",8,1` finds the config app as the first program on the disk. The
+utilities are not yet built for the C64.
+
 Boot disks are repo-owned:
 
 ```sh

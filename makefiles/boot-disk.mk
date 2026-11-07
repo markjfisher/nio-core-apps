@@ -13,12 +13,16 @@ FUJINET_NIO_ESP32_BOOT_DIR ?= $(FUJINET_NIO)/distfiles/esp32-data/boot/$(BOOT_DI
 
 BOOT_ATARI_IMAGE ?= $(BOOT_DISK_OUTPUT_DIR)/autorun.atr
 BOOT_BBC_IMAGE ?= $(BOOT_DISK_OUTPUT_DIR)/FN-BOOT.ssd
+BOOT_C64_IMAGE ?= $(BOOT_DISK_OUTPUT_DIR)/autorun.d64
+BOOT_C64_TITLE ?= FUJINET NIO
+BOOT_C64_FILES ?= CONFIG.prg FUJIDEMO.prg
 BOOT_MSDOS_IMAGE ?= $(BOOT_DISK_OUTPUT_DIR)/autorun.img
 BOOT_MSDOS_LABEL ?= FNBOOT
 BOOT_MSDOS_PRESET ?= 1440
 
 BOOT_DISK_IMAGE_atari := $(BOOT_ATARI_IMAGE)
 BOOT_DISK_IMAGE_bbc := $(BOOT_BBC_IMAGE)
+BOOT_DISK_IMAGE_c64 := $(BOOT_C64_IMAGE)
 BOOT_DISK_IMAGE_msdos := $(BOOT_MSDOS_IMAGE)
 BOOT_DISK_IMAGE := $(BOOT_DISK_IMAGE_$(PLATFORM))
 
@@ -44,6 +48,26 @@ boot-disk-bbc: all | $(BOOT_DISK_OUTPUT_DIR)
 	$(stage_boot_files)
 	python3 "$(CREATE_SSD)" -i "$(BOOT_DISK_STAGE_DIR)" -o "$(BOOT_BBC_IMAGE)" -t FNBOOT
 	@echo "Created BBC boot disk: $(BOOT_BBC_IMAGE)"
+
+# The demo the config app's F5 key runs. It is all assembly and generated data, with
+# nothing from fujinet-nio-lib: see apps/platform/c64/fujidemo/README.md.
+FUJIDEMO_DIR := $(APP_DIR)/platform/c64/fujidemo
+FUJIDEMO_GEN := $(TARGET_BUILD_DIR)/fujidemo
+FUJIDEMO_PRG := $(BIN_DIR)/fujidemo.prg
+
+$(FUJIDEMO_PRG): $(wildcard $(FUJIDEMO_DIR)/*/*)
+	mkdir -p "$(FUJIDEMO_GEN)" "$(BIN_DIR)"
+	python3 "$(FUJIDEMO_DIR)/tools/gen_gfx.py" "$(FUJIDEMO_GEN)/gfx.inc"
+	python3 "$(FUJIDEMO_DIR)/tools/gen_music.py" "$(FUJIDEMO_GEN)/music.inc"
+	ca65 -g -t none -I "$(FUJIDEMO_DIR)/src" -I "$(FUJIDEMO_GEN)" -l "$(FUJIDEMO_GEN)/fujidemo.lst" -o "$(FUJIDEMO_GEN)/fujidemo.o" "$(FUJIDEMO_DIR)/src/fujidemo.s"
+	ld65 -C "$(FUJIDEMO_DIR)/src/c64.cfg" -m "$(FUJIDEMO_GEN)/fujidemo.map" -Ln "$(FUJIDEMO_GEN)/fujidemo.lbl" -o "$@" "$(FUJIDEMO_GEN)/fujidemo.o"
+
+# The C64 disk holds the config app, built in repos/nio-config, and the demo: LOAD"*",8,1
+# finds the first file in its directory, so the order of BOOT_C64_FILES matters.
+boot-disk-c64: $(FUJIDEMO_PRG) | $(BOOT_DISK_OUTPUT_DIR)
+	$(stage_boot_files)
+	python3 boot-disk/scripts/create_d64.py -i "$(BOOT_DISK_STAGE_DIR)" -o "$(BOOT_C64_IMAGE)" -t "$(BOOT_C64_TITLE)" --files $(BOOT_C64_FILES)
+	@echo "Created C64 boot disk: $(BOOT_C64_IMAGE)"
 
 boot-disk-msdos: all | $(BOOT_DISK_OUTPUT_DIR)
 	$(stage_boot_files)

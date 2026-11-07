@@ -1,0 +1,7 @@
+# The C64 boot disk: the config app, first in the directory so LOAD"*",8,1 finds
+# it, and the demo its F5 key runs. Build the app first in repos/nio-config: make c64.
+apps:
+  - src: ${NIO_CONFIG}/build/c64/bin/config-nio.prg
+    name: CONFIG.prg
+  - src: ${BOOT_DISK_BIN}/fujidemo.prg
+    name: FUJIDEMO.prg
